@@ -17,7 +17,7 @@ Fidelity rules encoded here (do not "improve" them away):
 - <body> attributes are copied verbatim into the .astro page.
 """
 import os, re, shutil, subprocess, sys
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, unquote
 
 # ---- edit these ----------------------------------------------------------
 SITE = 'https://dlas.co.kr/'                # page URLs are SITE + slug + '/'
@@ -36,11 +36,43 @@ EXTS = ('.css', '.js', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.avif'
 OUT = os.path.join(PROJECT, 'public')
 SITE = SITE if SITE.endswith('/') else SITE + '/'
 ORIGIN_PATH = urlparse(SITE).path                      # e.g. /demo/
-SITE_NOSLASH = SITE.rstrip('/')
-SITE_ESC = SITE.replace('/', '\\/')
-SITE_NOSLASH_ESC = SITE_NOSLASH.replace('/', '\\/')
-SITE_RE = re.escape(SITE)
-SITE_ESC_RE = re.escape(SITE_ESC)
+
+# --- origin prefix variants -----------------------------------------------
+# WordPress emits the origin in several shapes: https://, http://, and
+# protocol-relative //host/ (WP Fastest Cache does this), each optionally in
+# JSON-escaped form (https:\/\/host\/) and optionally with a www. host.
+# All of them must be collected AND localized, otherwise assets silently stay
+# pointed at the live origin.
+_HOST = urlparse(SITE).netloc
+_HOSTS = [_HOST] + ([_HOST[4:]] if _HOST.startswith('www.') else ['www.' + _HOST])
+_PREFIXES = []                                          # longest first
+for _h in _HOSTS:
+    for _s in ('https://', 'http://', '//'):
+        _p = _s + _h + ORIGIN_PATH                      # e.g. https://host/
+        _PREFIXES += [_p, _p.replace('/', '\\/')]
+_PREFIXES.sort(key=len, reverse=True)
+
+def _unescape(u):
+    return u.replace('\\/', '/')
+
+def canonical(u):
+    """Normalize any origin-prefix variant of a URL to the SITE form."""
+    u = _unescape(u)
+    for _s in ('https://', 'http://', '//'):
+        for _h in _HOSTS:
+            pre = _s + _h + ORIGIN_PATH
+            if u.startswith(pre):
+                return SITE + u[len(pre):]
+    return u
+
+def localize(s):
+    """Strip every origin-prefix variant, leaving a root-relative path."""
+    for p in _PREFIXES:
+        s = s.replace(p, '\\/' if '\\/' in p else '/')
+        rootless = p[:-1] if not p.endswith('\\/') else p[:-2]
+        s = s.replace(rootless, '')
+    return s
+# --------------------------------------------------------------------------
 
 slug = sys.argv[1].strip('/')
 url = SITE if slug in ('', '.') else SITE + slug + '/'
@@ -51,12 +83,13 @@ if r.returncode != 0:
     sys.exit(f'FETCH FAILED {url}')
 html = r.stdout
 
+_ASSET_RE = re.compile(
+    '(?:' + '|'.join(re.escape(p) for p in _PREFIXES) + r')[^"\'\s\)<>,}]+')
+
 def site_asset_urls(text):
-    raw = re.findall(SITE_RE + r'[^"\'\s\)<>,}]+', text)
-    esc = [u.replace('\\/', '/') for u in re.findall(SITE_ESC_RE + r'[^"\'\s\)<>}]+', text)]
     out = set()
-    for u in raw + esc:
-        u = u.split('?')[0].split('#')[0].rstrip('\\').rstrip('&;.,')
+    for m in _ASSET_RE.findall(text):
+        u = canonical(m).split('?')[0].split('#')[0].rstrip('\\').rstrip('&;.,')
         if u.lower().endswith(EXTS):
             out.add(u)
     return out
@@ -69,7 +102,9 @@ def fetch(u):
     if u in done:
         return
     done.add(u)
-    rel = urlparse(u).path[len(ORIGIN_PATH):]
+    # percent-decode: the static server decodes the request path before hitting
+    # disk, so Korean/percent-encoded upload filenames must be stored decoded.
+    rel = unquote(urlparse(u).path[len(ORIGIN_PATH):])
     dest = os.path.join(OUT, rel)
     if os.path.isfile(dest):
         return
@@ -105,7 +140,7 @@ for _ in range(4):
             for m in re.findall(r'url\(\s*[\'"]?([^\'")]+)[\'"]?\s*\)', css):
                 if m.startswith(('data:', '#')):
                     continue
-                absu = urljoin(base, m.split('?')[0].split('#')[0])
+                absu = canonical(urljoin(base, m.split('?')[0].split('#')[0]))
                 if absu.startswith(SITE) and absu.lower().endswith(EXTS) and absu not in done:
                     new.add(absu)
     if not new:
@@ -120,15 +155,9 @@ for root, _d, files in os.walk(OUT):
             continue
         p = os.path.join(root, f)
         s = open(p, encoding='utf-8', errors='ignore').read()
-        n = s.replace(SITE_ESC, '\\/').replace(SITE, '/')
-        n = n.replace(SITE_NOSLASH_ESC, '').replace(SITE_NOSLASH, '')
+        n = localize(s)
         if n != s:
-            open(p, 'w').write(n)
-
-def localize(s):
-    s = s.replace(SITE_ESC, '\\/').replace(SITE, '/')
-    s = s.replace(SITE_NOSLASH_ESC, '').replace(SITE_NOSLASH, '')
-    return s
+            open(p, 'w', encoding='utf-8').write(n)
 
 head_inner = localize(html[html.find('<head>') + 6: html.find('</head>')])
 bm = re.search(r'<body([^>]*)>', html)
@@ -151,11 +180,10 @@ import body from '{rawpath}{name}-body.html?raw';
 ---
 
 <html {html_attrs}>
-  <head set:html={{head}} />
+  <head><Fragment set:html={{head}} /></head>
   <body
     {attrs}
-    set:html={{body}}
-  />
+  ><Fragment set:html={{body}} /></body>
 </html>
 """
 pdir = f'{PROJECT}/src/pages' if slug in ('', '.') else f'{PROJECT}/src/pages/{slug}'

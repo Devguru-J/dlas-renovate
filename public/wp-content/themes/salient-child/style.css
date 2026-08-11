@@ -1,0 +1,375 @@
+/*
+Theme Name: Salient Child Theme
+Description: This is a custom child theme for Salient
+Theme URI:   https://themeforest.net/item/salient-responsive-multipurpose-theme/4363266
+Author: ThemeNectar
+Author URI:  https://themeforest.net/user/themenectar
+Template: salient
+Version: 1.1 (210202 by Jian)
+*/
+
+
+/*---------- 공통 : 구글 웹폰트 임포트 ----------*/
+@import url(//fonts.googleapis.com/earlyaccess/hanna.css);
+
+
+
+/*---------- 공통 :: 구글 '한나'폰트 강제 적용 ----------
+h1, h2, h3, h4, h5, h6, li.cat-item a, div.tagcloud a, div.eltd-tags a, .eltd-btn.eltd-btn-solid .eltd-btn-text, p.eltd-blockquote-text, aside.eltd-sidebar .widget ul li h4.eltd-item-title a, .heading-title h4 {
+    font-family: 'Hanna' !important;
+    font-weight: normal !important;
+}*/
+
+
+/*---------- 공통 : 텍스트 문단 줄바꿈 ----------*/
+:lang(ko), body { word-break: keep-all; }
+
+
+
+/*---------- 공통 : 푸터 위아래 패딩 & 폰트 사이즈 & 로고 간격 ----------*/
+#footer-widgets {
+    padding-top: 0px !important;
+    padding-bottom: 0px !important;
+    font-size: 13px !important;
+    line-height: 18px !important;
+}
+
+
+
+/*---------- 공통 : 텍스트 강제 블랙, 화이트 ----------*/
+.black p { color: #333333 !important; }
+.black h5 { color: #333333 !important; }
+.white p { color: #fff !important; }
+
+
+/*---------- 공통 :: 푸터 위아래 패딩 & 폰트 사이즈 & 로고 간격 ----------*/
+#copyright {
+    padding-top: 20px !important;
+    padding-bottom: 30px !important;
+    font-size: 13px !important;   
+}
+#footer-outer #copyright[data-layout="centered"] .col .social li { 
+    margin-top: 15px !important;
+}
+
+
+
+/*---------- 푸터 SNS 로고 생성 ----------*/
+@font-face { font-family: "talk"; src: url('fonts/kakao_naver.eot') format('embedded-opentype'), url('fonts/kakao_naver.ttf') format('truetype'), url('fonts/kakao_naver.woff') format('woff'), url('fonts/kakao_naver.woff2') format('woff2'), url('fonts/kakao_naver.svg') format('svg'); font-weight: normal; font-style: normal; }
+
+
+
+/*---------- 네이버톡톡 & 카카오톡 & 네이버블로그 아이콘 폰트화 ----------*/
+#fullwidth_register_button .page-submenu .naver_talk, #fullwidth_register_button .page-submenu .kakao_plus { z-index: 999 !important; }
+i.icon-kakaotalk, i.icon-navertalk, i.icon-naverblog { background-color: transparent !important; margin-right: 0 !important; color: inherit !important; }
+[class^="icon-kakaotalk"]:before, [class*=" icon-kakaotalk"]:before, [class^="icon-navertalk"]:before, [class*=" icon-navertalk"]:before, [class^="icon-naverblog"]:before, [class*=" icon-naverblog"]:before { font-family: "talk"; font-style: normal; font-weight: normal; width: 1em; /* opacity: .8; */ /* For safety - reset parent styles, that can break glyph codes*/ font-variant: normal; text-transform: none; /* fix buttons height, for twitter bootstrap */ line-height: 1em; /* you can be more comfortable with increased icons size */ font-size: 100%; /* Font smoothing. That was taken from TWBS */ -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; /* Uncomment for 3D effect */ /* text-shadow: 1px 1px 1px rgba(127, 127, 127, 0.3); */ }
+
+.icon-kakaotalk:before { content: '\e800'; }
+.icon-navertalk:before { content: '\e801'; }
+.icon-naverblog:before { content: '\e802'; }
+
+#copyright i[class^="icon-kakaotalk"], #copyright i[class*=" icon-kakaotalk"], #copyright i[class^="icon-navertalk"], #copyright i[class*=" icon-navertalk"], #copyright i[class^="icon-naverblog"], #copyright i[class*=" icon-naverblog"] { color: #777 !important; top: 0 !important; }
+#copyright i[class^="icon-kakaotalk"]:hover, #copyright i[class*=" icon-kakaotalk"]:hover, #copyright i[class^="icon-navertalk"]:hover, #copyright i[class*=" icon-navertalk"]:hover, #copyright i[class^="icon-naverblog"]:hover, #copyright i[class*=" icon-naverblog"]:hover { color: #fff !important; }
+#copyright [class^="icon-kakaotalk"]:before, #copyright [class*=" icon-kakaotalk"]:before, #copyright [class^="icon-navertalk"]:before, #copyright [class*=" icon-navertalk"]:before, #copyright [class^="icon-naverblog"]:before, #copyright [class*=" icon-naverblog"]:before { font-size: 18px !important; width: auto !important; height: 20px !important; line-height: 20px !important; }
+
+
+
+/*----------  Contact Form 7 Clic Blink Issue(Bug) Fix  ----------/
+** https://stackoverflow.com/questions/12967441/disable-mobile-browser-click-touch-tap-feedback-box */
+form.wpcf7-form {
+	-webkit-tap-highlight-color: rgba(0, 0, 0, 0) !important;
+    -moz-tap-highlight-color: rgba(0, 0, 0, 0) !important;
+}
+/*----------  Contact Form  ----------*/
+.container-wrap textarea.ta_read_only { /* 정보수집 동의 텍스트박스 */
+	font-size: 12px !important;
+	line-height: 18px !important;
+	padding: 5px !important;
+	overflow-x: hidden !important;
+}
+span.your-accept { /* 정보수집 동의 체크박스 */
+	display: inline !important;
+}
+
+
+/*---------- 공통 :: 가격표 스티키 메뉴 패딩값 조절 ----------*/
+body .page-submenu li a {
+    font-weight: 500 !important;
+    padding-top: 12px !important;
+    padding-bottom: 12px !important;
+}
+
+
+
+/*---------- 게시판 돋보기 버튼 패딩 ----------*/
+body[data-form-submit="regular"] .container-wrap button[type=submit].kboard-ask-one-button-search {
+    padding-top: 1px !important;
+    padding-bottom: 1px !important;
+    padding-left: 1px !important;
+    padding-right: 1px !important;
+}
+
+
+/*---------- 신청하기 게시판 :: 게시판 상태값 박스 컬러 ----------*/
+.kboard-ask-one-status.status-1 { background-color: #a0c0f7 !important; }
+.kboard-ask-one-status.status-2 { background-color: #928eff !important; }
+.kboard-ask-one-status.status-3 { background-color: #928eff !important; }
+.kboard-ask-one-status.status-4 { background-color: #db7272 !important; }
+
+
+/*---------- 신청하기 게시판 :: 게시판 상단 백그라운드, 폰트 컬러 ----------*/
+#kboard-ask-one-list .kboard-list thead tr td { 
+    background-color: #e5e5e5 !important;
+    color: #333333 !important;
+}
+
+
+
+/*---------- 신청하기 게시판 :: 게시판 폰트 사이즈 ----------*/
+.kboard-detail { font-size: 15px !important; }
+.kboard-content .content-view,
+.comments-list-content p { font-size: 14px !important; }
+
+
+
+/*---------- 신청하기 게시판 :: 글쓰기 버튼 폰트크게, 폰트교체 ----------*/
+body.page-id-797 .kboard-left a { 
+    font-size: 14px !important;
+    font-weight: bold !important;
+    letter-spacing: 1px !important;
+    padding-top: 3px !important;
+    padding-bottom: 3px !important;
+    margin-bottom: 10px !important;
+}
+body.page-id-797 .kboard-control a { 
+    font-size: 14px !important;
+    font-weight: bold !important;
+    letter-spacing: 1px !important;
+    padding-top: 3px !important;
+    padding-bottom: 3px !important;
+    margin-bottom: 5px !important;
+}
+body.page-id-797 .kboard-ask-one-button-small a { 
+    font-weight: bold !important;
+}
+
+/*---------- contact :: 입력란 배경색 조정 ----------*/
+body[data-form-style="minimal"] .container-wrap .span_12.light input[type="text"], body[data-form-style="minimal"] .container-wrap .span_12.light textarea, body[data-form-style="minimal"] .container-wrap .span_12.light input[type="email"], body[data-form-style="minimal"] .container-wrap .span_12.light input[type=password], body[data-form-style="minimal"] .container-wrap .span_12.light input[type=tel], body[data-form-style="minimal"] .container-wrap .span_12.light input[type=url], body[data-form-style="minimal"] .container-wrap .span_12.light input[type=search], body[data-form-style="minimal"] .container-wrap .span_12.light input[type=date] {
+    background-color: #212121 !important;
+}
+
+
+
+
+/*---------- 브랜드 차량리스트 간 간격 2px 조정 ----------*/
+body[data-col-gap="20px"] .vc_row-fluid .wpb_column, body .container-wrap .vc_row-fluid[data-column-margin="20px"] .wpb_column:not(.child_column), body .container-wrap .inner_row[data-column-margin="20px"] .child_column {
+    padding-left: 1px !important;
+    padding-right: 1px !important;
+}
+
+
+/*---------- 브랜드페이지 하단 명언 폰트사이즈 ----------*/
+.testimonial_slider:not([data-style*="multiple_visible"]) blockquote { font-size: 18px !important; }
+
+
+/*---------- 견적서 리스트 패딩 간격----------*/
+.nectar-hor-list-item {
+    padding: 10px 20px !important;
+}
+
+
+/*---------- 포스트 body 폰트 사이즈 작게 조절 (기본 15px) ----------*/
+body.post-template-default { font-size: 13px !important;}
+
+/*---------- 포트폴리오 body 폰트 사이즈 작게 조절 (기본 15px) ----------*/
+body.portfolio-template-default { font-size: 13px !important;}
+
+
+/*---------- 포트폴리오 헤더 폰트 ----------*/
+.web_estimate p { 
+    /* font-family: 'stylish' !important; */
+    font-size: 15px !important;
+    line-height: 32px !important;
+}
+.web_estimate h2 { 
+    font-size: 35px !important;
+    line-height: 45px !important;
+}
+
+
+/*---------- 간편상담 신청하기 이름, 연락처 폰트 크기----------*/
+body[data-form-style="minimal"] input[type="text"], body[data-form-style="minimal"] input[type=tel] {
+    font-size: 18px !important;
+    font-family: 'noto-sans' !important;
+    font-weight: bold !important;
+    letter-spacing: 1px !important;
+}
+
+
+/*---------- 빠른 상담 신청 버튼 조정 ----------*/
+.ascend input[type="submit"] {
+    font-family: Do Hyeon;
+    letter-spacing: 1px !important;
+    font-size: 18px !important;
+}
+
+
+/*---------- 배너 스티키 ----------*/
+#apply-sticky .page-submenu { transform: none !important; }
+#apply-sticky .page-submenu.stuck { transform: translateY(0px) !important; }
+
+
+/* ----------  footer 하단 고정버튼(라라펀드 따라하기)  --------- */
+body.home #footer-outer #copyright[data-layout="centered"] { padding-bottom: 105px !important; }
+#footer_container_fullwidth { 
+    background: linear-gradient(135deg, #00c0c6 0%, #736efe 100%); 
+    width: 100%; height: 40px; position: fixed; bottom: 0; text-align: center; z-index: 9900; }
+#footer_container_fullwidth .containerbox { width: 50%; display: block; margin-left: auto; margin-right: auto; padding: 0; font-weight: 500; font-size: 1em; text-align: center; }
+#footer_container_fullwidth .containerbox .inner_left, #footer_container_fullwidth .containerbox .inner_right { color: #fff; height: 40px; display: flex; align-items: center; justify-content: center; }
+#footer_container_fullwidth .containerbox .inner_left a, #footer_container_fullwidth .containerbox .inner_right a { color: #fff !important; display: block; width: 100%; height: 100%; line-height: 40px; -webkit-transition: all 0.3s ease-out; transition: all 0.3s ease-out; }
+#footer_container_fullwidth .containerbox .inner_left { width: 60%; float: left; }
+#footer_container_fullwidth .containerbox .inner_right { width: 40%; float: right; background:#ff4c4c; }
+#footer_container_fullwidth .containerbox .inner_right a:hover { background: #fff; color: #000 !important; }
+
+
+
+/*----------  브랜드 하단 고정 배너 만드는 연습  --------- */
+.sticky-bottom { width: 100% !important ;position: fixed; bottom: 0; text-align: center; z-index: 9900; }
+
+
+
+
+
+/*---------- 팀멤버 그리드 간 간격 10px 조정 ----------*/
+body .container-wrap .inner_row[data-column-margin="20px"] .child_column{
+    padding-left: 5px !important;
+    padding-right: 5px !important;
+}
+
+/*---------- 팀멤버 그리드 이미지 & 텍스트 투명도 조절 ----------*/
+.team-member[data-style="bio_fullscreen"] .team-member-overlay { opacity: 0.5 !important; }
+.team-member[data-style="bio_fullscreen"]:hover .team-member-overlay { opacity: 0 !important; }
+
+
+/*---------- 후기박스1 폰트 사이즈, 높이, 패딩 ----------*/
+.review .testimonial_slider blockquote {
+    font-size: 15px;
+    line-height: 24px;
+}
+.testimonial_slider[data-style="multiple_visible_minimal"] blockquote .inner {
+    padding: 40px;
+    background: #f2f9ff
+}
+
+
+
+/*---------- 리스금리계산기 컨택트폼 텍스트 박스안으로 널기 ----------*/
+div#wpcf7-f2470-p2394-o1 label { display: block !important; position: relative !important; }
+
+div#wpcf7-f2470-p2394-o1 label span.unit { color: #fff !important; position: absolute !important; bottom: 17px !important; right: 18px !important; }
+
+div#wpcf7-f2470-p2394-o1 label .c9, div#wpcf7-f2470-p2394-o1 label .c10, div#wpcf7-f2470-p2394-o1 label .c11, div#wpcf7-f2470-p2394-o1 label .c12 { background-color: #002c3f !important; }
+
+
+/*---------- 상담 신청하기 현금, 할부 ----------*/
+.boxtext {
+    color: #e0d8ff !important;
+    padding-bottom: 30px !important;
+
+}
+
+
+
+
+/*----- 아래부터는 모바일 적용 아래부터는 모바일 적용 아래부터는 모바일 적용 아래부터는 모바일 적용 아래부터는 모바일 적용 아래부터는 모바일 적용 -----*/
+@media only screen and (max-width: 999px) {
+    
+    /*---------- (모바일)메인 페이지 :: 하단 명언 폰트사이즈 ----------*/
+    .testimonial_slider:not([data-style*="multiple_visible"]) blockquote { 
+        font-size: 15px !important;
+        line-height: 28px !important;
+    }
+
+    /*---------- (모바일)메인 페이지 :: 슬라이더 버튼 크기 ----------*/
+    body.home .nectar-slider-wrap[data-fullscreen="false"] .swiper-slide .button a {
+        font-size: 15px !important;
+        padding: 18px 40px !important;
+    }
+
+    .naver_searchbox {
+        border-left: 5px solid #20cd64;
+        border-right: 5px solid #20cd64;
+    }
+
+
+}
+
+
+
+
+@media only screen and (max-width: 690px) {
+
+    /* 푸터 하단 고정 버튼 */
+    #footer_container_fullwidth .containerbox { width: 100%; margin-left: 0; margin-right: 0; }
+
+
+    /*---------- (모바일) 신청 게시판 :: 상담신청 게시판 모바일 넓이 조절 ----------*/
+    body.page-id-797 #kboard {
+        width: 110% !important;
+        margin-left: -5% !important;
+    }
+
+    
+    /*---------- (모바일)신청 페이지 :: 상담신청 게시판 모바일 폰트 사이즈 조절 ----------*/
+    #kboard-ask-one-list .kboard-list table td.kboard-list-title .kboard-ask-one-cut-strings {
+        font-size: 13px !important;
+    }
+
+  
+    /*---------- (모바일) 신청 게시판 :: 게시글 간격 좁히기 ----------*/
+    #kboard-ask-one-list .kboard-list table td.kboard-list-title .kboard-ask-one-cut-strings {
+        margin-bottom: 0px !important;
+    }
+    
+
+    /*---------- (모바일) 신청 게시판 :: 글쓰기 버튼 가운데, 폰트크게, 폰트교체 ----------*/
+    body.page-id-797 .kboard-left { 
+        text-align: center !important;
+    }
+    body.page-id-797 .kboard-control {
+        text-align: center !important;
+    }
+
+
+    /*---------- 공통 :: 푸터 SNS 로고 아래 간격 모바일에서 좁히기 ----------*/
+
+    #footer-outer #copyright[data-layout="centered"] .col .social li { 
+        margin-bottom: 0px !important;
+    }
+
+
+}
+
+
+
+
+
+@media only screen and (max-width: 600px) {
+
+
+}
+
+
+
+
+
+@media only screen and (max-width: 480px) {
+
+    /* 푸터 하단 고정 버튼 */
+    body.home #footer-outer #copyright[data-layout="centered"] { padding-bottom: 95px !important; }
+    #footer_container_fullwidth .containerbox { font-size: 1em; }
+    #footer_container_fullwidth, #footer_container_fullwidth .containerbox .inner_left, #footer_container_fullwidth .containerbox .inner_right { height: 40px; }
+    #footer_container_fullwidth .containerbox .inner_left a, #footer_container_fullwidth .containerbox .inner_right a { line-height: 40px; }
+
+
+}

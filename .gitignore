@@ -4,3 +4,5 @@ dist/
 reference/
 .astro/
 port-failures.txt
+.playwright-mcp/
+*.local.png
