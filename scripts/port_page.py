@@ -127,6 +127,13 @@ def fetch(u):
 for u in sorted(site_asset_urls(html)):
     fetch(u)
 
+# Contact Form 7 6.x fetches a per-form SWV validation schema over the REST API
+# on load. It is a static JSON document, so snapshot it to keep client-side
+# validation byte-identical to the live site. (Submission itself still needs a
+# backend — see plan Task 8.)
+for _fid in sorted(set(re.findall(r'data-wpcf7-id="(\d+)"', html))):
+    fetch(f'{SITE}wp-json/contact-form-7/v1/contact-forms/{_fid}/feedback/schema')
+
 # recursively resolve url() references inside collected CSS (fonts, images)
 for _ in range(4):
     new = set()
