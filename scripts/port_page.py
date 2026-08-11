@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Port one page of a live server-rendered site into an Astro project, verbatim.
+
+Usage: edit the constants below, then:  python3 port_page.py <slug>
+  <slug> examples: "."  (homepage)   "work"   "portfolio/crystal-vibes"
+
+Per page it: snapshots the server HTML, collects every referenced same-site
+asset into public/ at its original path (copying from LOCAL_SOURCES when the
+file exists on disk, e.g. a purchased theme), recursively resolves CSS url()
+references, strips the origin everywhere (raw + JSON-escaped forms, HTML and
+collected css/js), and generates src/raw partials + a set:html .astro page.
+
+Fidelity rules encoded here (do not "improve" them away):
+- Source is the SERVER html via curl, never a rendered-DOM snapshot.
+- Assets keep their original URL paths under public/.
+- Markup is injected via ?raw + set:html so Astro never parses it.
+- <body> attributes are copied verbatim into the .astro page.
+"""
+import os, re, shutil, subprocess, sys
+from urllib.parse import urljoin, urlparse
+
+# ---- edit these ----------------------------------------------------------
+SITE = 'https://dlas.co.kr/'                # page URLs are SITE + slug + '/'
+PROJECT = '/Users/tuesdaymorning/Devguru/memory_projects/dl_renovate'
+# 라이브는 Salient 17.2.0, 구매본 reference/salient-new은 18.2.1이라 버전이 다르다.
+# 로컬 복사를 쓰면 CSS/JS가 라이브와 달라져 동일성이 깨지므로 전량 다운로드한다.
+LOCAL_SOURCES = {}
+# --------------------------------------------------------------------------
+
+UA = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/126.0 Safari/537.36')
+EXTS = ('.css', '.js', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.avif',
+        '.woff', '.woff2', '.ttf', '.otf', '.eot', '.mp4', '.webm', '.mov', '.m4v',
+        '.ogv', '.mp3', '.ogg', '.ico', '.json', '.pdf')
+
+OUT = os.path.join(PROJECT, 'public')
+SITE = SITE if SITE.endswith('/') else SITE + '/'
+ORIGIN_PATH = urlparse(SITE).path                      # e.g. /demo/
+SITE_NOSLASH = SITE.rstrip('/')
+SITE_ESC = SITE.replace('/', '\\/')
+SITE_NOSLASH_ESC = SITE_NOSLASH.replace('/', '\\/')
+SITE_RE = re.escape(SITE)
+SITE_ESC_RE = re.escape(SITE_ESC)
+
+slug = sys.argv[1].strip('/')
+url = SITE if slug in ('', '.') else SITE + slug + '/'
+name = 'index' if slug in ('', '.') else slug.replace('/', '-')
+
+r = subprocess.run(['curl', '-sL', '--fail', '-A', UA, url], capture_output=True, text=True)
+if r.returncode != 0:
+    sys.exit(f'FETCH FAILED {url}')
+html = r.stdout
+
+def site_asset_urls(text):
+    raw = re.findall(SITE_RE + r'[^"\'\s\)<>,}]+', text)
+    esc = [u.replace('\\/', '/') for u in re.findall(SITE_ESC_RE + r'[^"\'\s\)<>}]+', text)]
+    out = set()
+    for u in raw + esc:
+        u = u.split('?')[0].split('#')[0].rstrip('\\').rstrip('&;.,')
+        if u.lower().endswith(EXTS):
+            out.add(u)
+    return out
+
+copied = downloaded = 0
+failed, done = [], set()
+
+def fetch(u):
+    global copied, downloaded
+    if u in done:
+        return
+    done.add(u)
+    rel = urlparse(u).path[len(ORIGIN_PATH):]
+    dest = os.path.join(OUT, rel)
+    if os.path.isfile(dest):
+        return
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    for prefix, local in LOCAL_SOURCES.items():
+        if rel.startswith(prefix):
+            cand = os.path.join(local, rel[len(prefix):])
+            if os.path.isfile(cand):
+                shutil.copy2(cand, dest)
+                copied += 1
+                return
+    rr = subprocess.run(['curl', '-sL', '--fail', '-A', UA, '-o', dest, u], capture_output=True)
+    if rr.returncode != 0 or not os.path.isfile(dest) or os.path.getsize(dest) == 0:
+        failed.append(u)
+        if os.path.isfile(dest):
+            os.remove(dest)
+    else:
+        downloaded += 1
+
+for u in sorted(site_asset_urls(html)):
+    fetch(u)
+
+# recursively resolve url() references inside collected CSS (fonts, images)
+for _ in range(4):
+    new = set()
+    for root, _d, files in os.walk(OUT):
+        for f in files:
+            if not f.endswith('.css'):
+                continue
+            p = os.path.join(root, f)
+            css = open(p, encoding='utf-8', errors='ignore').read()
+            base = SITE + os.path.dirname(os.path.relpath(p, OUT)) + '/'
+            for m in re.findall(r'url\(\s*[\'"]?([^\'")]+)[\'"]?\s*\)', css):
+                if m.startswith(('data:', '#')):
+                    continue
+                absu = urljoin(base, m.split('?')[0].split('#')[0])
+                if absu.startswith(SITE) and absu.lower().endswith(EXTS) and absu not in done:
+                    new.add(absu)
+    if not new:
+        break
+    for u in sorted(new):
+        fetch(u)
+
+# strip the origin inside every collected css/js (downloaded files still point home)
+for root, _d, files in os.walk(OUT):
+    for f in files:
+        if not f.endswith(('.css', '.js')):
+            continue
+        p = os.path.join(root, f)
+        s = open(p, encoding='utf-8', errors='ignore').read()
+        n = s.replace(SITE_ESC, '\\/').replace(SITE, '/')
+        n = n.replace(SITE_NOSLASH_ESC, '').replace(SITE_NOSLASH, '')
+        if n != s:
+            open(p, 'w').write(n)
+
+def localize(s):
+    s = s.replace(SITE_ESC, '\\/').replace(SITE, '/')
+    s = s.replace(SITE_NOSLASH_ESC, '').replace(SITE_NOSLASH, '')
+    return s
+
+head_inner = localize(html[html.find('<head>') + 6: html.find('</head>')])
+bm = re.search(r'<body([^>]*)>', html)
+body_attrs = bm.group(1).strip()
+body_inner = localize(html[bm.end(): html.rfind('</body>')])
+hm = re.search(r'<html([^>]*)>', html)
+html_attrs = (hm.group(1).strip() if hm else 'lang="en"')
+
+os.makedirs(f'{PROJECT}/src/raw', exist_ok=True)
+open(f'{PROJECT}/src/raw/{name}-head.html', 'w').write(head_inner)
+open(f'{PROJECT}/src/raw/{name}-body.html', 'w').write(body_inner)
+
+depth = 0 if slug in ('', '.') else slug.count('/') + 1
+rawpath = '../' * (depth + 1) + 'raw/'
+attrs = '\n    '.join(re.findall(r'[a-zA-Z-]+="[^"]*"|[a-zA-Z-]+', body_attrs))
+page = f"""---
+// /{slug if slug not in ('', '.') else ''} page ported verbatim from {url}
+import head from '{rawpath}{name}-head.html?raw';
+import body from '{rawpath}{name}-body.html?raw';
+---
+
+<html {html_attrs}>
+  <head set:html={{head}} />
+  <body
+    {attrs}
+    set:html={{body}}
+  />
+</html>
+"""
+pdir = f'{PROJECT}/src/pages' if slug in ('', '.') else f'{PROJECT}/src/pages/{slug}'
+os.makedirs(pdir, exist_ok=True)
+open(pdir + '/index.astro', 'w').write(page)
+print(f'{name}: copied {copied}, downloaded {downloaded}, failed {len(failed)}')
+for u in failed:
+    print('  FAIL', u)

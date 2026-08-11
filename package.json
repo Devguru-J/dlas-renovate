@@ -1,0 +1,19 @@
+{
+  "name": "dl_renovate",
+  "version": "1.0.0",
+  "description": "dlas.co.kr Astro mirror",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "astro": "^7.2.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
