@@ -74,12 +74,26 @@ def localize(s):
     return s
 # --------------------------------------------------------------------------
 
-slug = sys.argv[1].strip('/')
-url = SITE if slug in ('', '.') else SITE + slug + '/'
-name = 'index' if slug in ('', '.') else slug.replace('/', '-')
+# usage: port_page.py <slug> [--as <page-name>] [--allow-error]
+#   --as 404        -> writes src/pages/404.astro instead of src/pages/<slug>/index.astro
+#   --allow-error   -> keep the response even on a non-2xx status (needed to
+#                      snapshot the live 404 template, which curl --fail rejects)
+argv = sys.argv[1:]
+PAGE_NAME = None
+if '--as' in argv:
+    i = argv.index('--as')
+    PAGE_NAME = argv[i + 1]
+    del argv[i:i + 2]
+ALLOW_ERROR = '--allow-error' in argv
+argv = [a for a in argv if not a.startswith('--')]
 
-r = subprocess.run(['curl', '-sL', '--fail', '-A', UA, url], capture_output=True, text=True)
-if r.returncode != 0:
+slug = argv[0].strip('/')
+url = SITE if slug in ('', '.') else SITE + slug + '/'
+name = PAGE_NAME or ('index' if slug in ('', '.') else slug.replace('/', '-'))
+
+cmd = ['curl', '-sL', '-A', UA, url] if ALLOW_ERROR else ['curl', '-sL', '--fail', '-A', UA, url]
+r = subprocess.run(cmd, capture_output=True, text=True)
+if r.returncode != 0 or not r.stdout:
     sys.exit(f'FETCH FAILED {url}')
 html = r.stdout
 
@@ -177,7 +191,7 @@ os.makedirs(f'{PROJECT}/src/raw', exist_ok=True)
 open(f'{PROJECT}/src/raw/{name}-head.html', 'w').write(head_inner)
 open(f'{PROJECT}/src/raw/{name}-body.html', 'w').write(body_inner)
 
-depth = 0 if slug in ('', '.') else slug.count('/') + 1
+depth = 0 if (PAGE_NAME or slug in ('', '.')) else slug.count('/') + 1
 rawpath = '../' * (depth + 1) + 'raw/'
 attrs = '\n    '.join(re.findall(r'[a-zA-Z-]+="[^"]*"|[a-zA-Z-]+', body_attrs))
 page = f"""---
@@ -193,9 +207,13 @@ import body from '{rawpath}{name}-body.html?raw';
   ><Fragment set:html={{body}} /></body>
 </html>
 """
-pdir = f'{PROJECT}/src/pages' if slug in ('', '.') else f'{PROJECT}/src/pages/{slug}'
-os.makedirs(pdir, exist_ok=True)
-open(pdir + '/index.astro', 'w').write(page)
+if PAGE_NAME:
+    os.makedirs(f'{PROJECT}/src/pages', exist_ok=True)
+    open(f'{PROJECT}/src/pages/{PAGE_NAME}.astro', 'w').write(page)
+else:
+    pdir = f'{PROJECT}/src/pages' if slug in ('', '.') else f'{PROJECT}/src/pages/{slug}'
+    os.makedirs(pdir, exist_ok=True)
+    open(pdir + '/index.astro', 'w').write(page)
 print(f'{name}: copied {copied}, downloaded {downloaded}, failed {len(failed)}')
 for u in failed:
     print('  FAIL', u)
