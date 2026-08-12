@@ -1,5 +1,9 @@
 SUPABASE_URL=https://xxxxxxxx.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=
+# 부재/공백이면 기본값은 활성화(true)이다. 위젯을 아직 붙이지 않았다면 명시적으로
+# false로 설정해야 한다 — 그러지 않으면 위젯 없는 페이지의 모든 정상 제출이
+# cf-turnstile-response 누락으로 spam 처리된다. 허용값: "true" | "false"
+TURNSTILE_ENABLED=false
 TURNSTILE_SECRET=
 RESEND_API_KEY=
 NOTIFY_TO=someone@dlas.co.kr

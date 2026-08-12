@@ -30,4 +30,67 @@ describe('readEnv', () => {
     expect(readEnv({ ...full, PUBLIC_SITE_ORIGIN: 'https://dlas.co.kr/' }).siteOrigin)
       .toBe('https://dlas.co.kr');
   });
+
+  describe('TURNSTILE_ENABLED', () => {
+    it('변수가 없으면 기본적으로 활성화된다', () => {
+      const { TURNSTILE_ENABLED, ...rest } = full as Record<string, unknown>;
+      const env = readEnv(rest);
+      expect(env.turnstileEnabled).toBe(true);
+      expect(env.turnstileSecret).toBe('t');
+    });
+
+    it('빈 문자열/공백이면 기본적으로 활성화된다', () => {
+      expect(readEnv({ ...full, TURNSTILE_ENABLED: '' }).turnstileEnabled).toBe(true);
+      expect(readEnv({ ...full, TURNSTILE_ENABLED: '   ' }).turnstileEnabled).toBe(true);
+    });
+
+    it('"false"(대소문자, 공백 무시)면 비활성화된다', () => {
+      expect(readEnv({ ...full, TURNSTILE_ENABLED: 'false' }).turnstileEnabled).toBe(false);
+      expect(readEnv({ ...full, TURNSTILE_ENABLED: 'FALSE' }).turnstileEnabled).toBe(false);
+      expect(readEnv({ ...full, TURNSTILE_ENABLED: '  False  ' }).turnstileEnabled).toBe(false);
+    });
+
+    it('"true"(대소문자, 공백 무시)면 활성화된다', () => {
+      expect(readEnv({ ...full, TURNSTILE_ENABLED: 'true' }).turnstileEnabled).toBe(true);
+      expect(readEnv({ ...full, TURNSTILE_ENABLED: 'TRUE' }).turnstileEnabled).toBe(true);
+      expect(readEnv({ ...full, TURNSTILE_ENABLED: '  True  ' }).turnstileEnabled).toBe(true);
+    });
+
+    it('true/false 외의 값이면 변수 이름과 허용값을 알려주며 예외를 던진다', () => {
+      expect(() => readEnv({ ...full, TURNSTILE_ENABLED: 'yes' }))
+        .toThrow(/TURNSTILE_ENABLED/);
+      expect(() => readEnv({ ...full, TURNSTILE_ENABLED: 'yes' }))
+        .toThrow(/true/);
+      expect(() => readEnv({ ...full, TURNSTILE_ENABLED: 'yes' }))
+        .toThrow(/false/);
+    });
+
+    it('활성화 상태에서 TURNSTILE_SECRET이 없으면 예외를 던진다', () => {
+      const { TURNSTILE_SECRET, ...rest } = full;
+      expect(() => readEnv({ ...rest, TURNSTILE_ENABLED: 'true' })).toThrow(/TURNSTILE_SECRET/);
+    });
+
+    it('활성화 상태에서 TURNSTILE_SECRET이 빈 문자열이면 예외를 던진다', () => {
+      expect(() => readEnv({ ...full, TURNSTILE_ENABLED: 'true', TURNSTILE_SECRET: '' }))
+        .toThrow(/TURNSTILE_SECRET/);
+    });
+
+    it('비활성화 상태에서는 TURNSTILE_SECRET이 없어도 된다', () => {
+      const { TURNSTILE_SECRET, ...rest } = full;
+      const env = readEnv({ ...rest, TURNSTILE_ENABLED: 'false' });
+      expect(env.turnstileEnabled).toBe(false);
+      expect(env.turnstileSecret).toBeNull();
+    });
+
+    it('비활성화 상태에서는 TURNSTILE_SECRET이 빈 문자열이어도 된다', () => {
+      const env = readEnv({ ...full, TURNSTILE_ENABLED: 'false', TURNSTILE_SECRET: '' });
+      expect(env.turnstileEnabled).toBe(false);
+      expect(env.turnstileSecret).toBeNull();
+    });
+
+    it('비활성화 상태에서 TURNSTILE_SECRET이 존재해도 무시하고 null로 만든다', () => {
+      const env = readEnv({ ...full, TURNSTILE_ENABLED: 'false' });
+      expect(env.turnstileSecret).toBeNull();
+    });
+  });
 });

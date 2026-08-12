@@ -69,9 +69,13 @@ async function handleFeedback(
 
   const ip = request.headers.get('cf-connecting-ip');
 
-  // 2. Turnstile
-  const passed = await verifyTurnstile(env.turnstileSecret, str('cf-turnstile-response'), ip);
-  if (!passed) return cf7Response(unitTag, 'spam', msg.spam);
+  // 2. Turnstile — TURNSTILE_ENABLED가 false면(위젯이 페이지에 없음) 검사를 건너뛴다.
+  // 켜져 있을 때는 기존과 동일하게 동작한다. env.turnstileSecret는 enabled일 때만
+  // non-null이 보장되므로 여기서 빈 시크릿으로 호출될 가능성이 없다.
+  if (env.turnstileEnabled) {
+    const passed = await verifyTurnstile(env.turnstileSecret as string, str('cf-turnstile-response'), ip);
+    if (!passed) return cf7Response(unitTag, 'spam', msg.spam);
+  }
 
   // 3. 텍스트 검증
   const text = validateText(def, str, strAll);

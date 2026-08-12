@@ -1,0 +1,3 @@
+/wp-json/contact-form-7/v1/contact-forms/*/feedback/schema
+  Content-Type: application/json; charset=utf-8
+  Cache-Control: public, max-age=3600
