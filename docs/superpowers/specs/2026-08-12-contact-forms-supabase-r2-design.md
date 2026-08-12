@@ -104,7 +104,7 @@ R2 presigned URL 대신 자체 서명 링크(`/api/file/...`)를 쓰는 이유: 
 - 제출: `POST /wp-json/contact-form-7/v1/contact-forms/{id}/feedback` (multipart)
 - 로드 시: `GET /wp-json/contact-form-7/v1/contact-forms/{id}/feedback/schema` (클라이언트 검증용)
 
-이 엔드포인트를 우리가 구현하면 프론트 코드는 한 줄도 고치지 않아도 된다. 필드별 인라인 에러, 스피너, 성공 메시지 스타일, `wpcf7mailsent` 이벤트가 전부 현재와 동일하게 동작한다. schema는 폼별 정적 JSON을 `public/`에 두어 404를 없앤다.
+이 엔드포인트를 우리가 구현하면 프론트 코드는 한 줄도 고치지 않아도 된다. 필드별 인라인 에러, 스피너, 성공 메시지 스타일, `wpcf7mailsent` 이벤트가 전부 현재와 동일하게 동작한다. schema 파일은 **이미 `public/`에 스냅샷되어 있다** (§11.7).
 
 응답 JSON 형식 (CF7 6.x 규약):
 
@@ -315,17 +315,19 @@ R2 라이프사이클: `submissions/` 프리픽스에 3년 후 자동 삭제 규
 | new-car / used-car | `your-name` | text | ✅ | maxlength 400 |
 | new-car / used-car | `your-phone` | tel | ✅ | maxlength 400, **minlength 13** |
 | new-car / used-car | `your-car` | text | ✅ | maxlength 400 |
-| new-car / used-car | `your-method[]` | checkbox | — | 아래 값 목록 |
-| new-car / used-car | `your-pay[]` | checkbox | — | 아래 값 목록 |
+| new-car / used-car | `your-method[]` | checkbox | ✅ | 아래 값 목록 |
+| new-car / used-car | `your-pay[]` | checkbox | ✅ | 아래 값 목록 |
 | new-car / used-car | `your-message` | textarea | — | maxlength 2000 |
 | detailing | `your-name` | text | ✅ | maxlength 400 |
 | detailing | **`your-telephone`** | tel | ✅ | maxlength 400, minlength 없음, 초기값 `010-` |
 | detailing | `your-car` | text | ✅ | maxlength 400 |
-| detailing | `your-method[]` | checkbox | — | 아래 값 목록 |
-| detailing | `your-pay[]` | checkbox | — | 아래 값 목록 |
+| detailing | `your-method[]` | checkbox | ✅ | 아래 값 목록 |
+| detailing | `your-pay[]` | checkbox | ✅ | 아래 값 목록 |
 | detailing | `your-message` | textarea | — | maxlength 2000 |
 
-**`file-71` 주의**: 라벨 문구는 "(선택, 최대 2개)"라고 되어 있으나 input에는 `wpcf7-validates-as-required`와 `aria-required="true"`가 붙어 있다. 즉 실제로는 **필수**로 동작한다. 원본 동작을 그대로 옮기므로 필수로 검증하되, 라벨과 어긋난다는 점을 발주처에 알리고 어느 쪽으로 맞출지 확인한다.
+**체크박스도 필수다**: `your-method[]`와 `your-pay[]`는 마크업만 보면 필수 표시가 없지만, §11.7의 SWV 스키마에 `required` 규칙이 걸려 있다. 필수로 검증한다.
+
+**`file-71` 주의**: 라벨 문구는 "(선택, 최대 2개)"이지만 input에 `wpcf7-validates-as-required`가 붙어 있고, SWV 스키마에도 `requiredfile` 규칙이 있으며 그 에러 문구가 "성함, 연락처, **최소 1개의 견적서 파일첨부** 부탁드립니다."다. 즉 첨부는 의도적으로 필수이고 **라벨 문구가 잘못된 것**이다. 필수로 검증한다.
 
 **`your-phone` minlength 13**: `010-1234-5678` 형태(하이픈 포함 13자)를 전제한다. 화면에서는 `cleave.min.js`가 `.your_phone` 클래스에 붙어 입력 중 자동으로 하이픈을 넣는다 (`analysis`, `new-car`, `used-car`만 해당). `detailing`의 `your-telephone`은 이 클래스가 없어 자동 서식이 없고 minlength도 없다 — 사용자가 아무 형태로나 넣을 수 있다. 서버에서는 **양쪽 다 숫자만 추출해 저장한다**: 10~11자리면 `010-1234-5678` 형태로 정규화하고, 그 외 길이면 입력 원문을 그대로 저장한다 (해외 번호 등을 잃지 않기 위함).
 
@@ -339,7 +341,9 @@ R2 라이프사이클: `submissions/` 프리픽스에 3년 후 자동 삭제 규
 - new-car / used-car: `좋은 조건 즉시`, `이번달 구매 예정`, `다음달 계획 중`, `3개월 이상 예정`
 - detailing: `예약가능즉시`, `1주일 이내`, `1개월 이내`, `미정`
 
-체크박스는 다중 선택이며 아무것도 안 고르면 필드 자체가 전송되지 않는다. 값이 위 목록에 없으면 저장하지 않고 무시한다 (조작 방지). 값은 번역·매핑 없이 **원문 문자열 그대로** `methods` / `pay_period` 배열에 넣는다 — 기존 zmes 전송도 그랬고, 담당자가 읽는 값이 바뀌면 안 된다.
+체크박스는 다중 선택이며 아무것도 안 고르면 필드 자체가 전송되지 않는다. 두 필드 모두 **필수**이므로 아무것도 오지 않으면 `validation_failed`다. 목록 밖의 값이 오면 무시하는 게 아니라 역시 `validation_failed`로 응답한다 — SWV 스키마에 `enum` 규칙으로 정의되어 있어, 정상 브라우저에서는 발생할 수 없는 입력이다.
+
+값은 번역·매핑 없이 **원문 문자열 그대로** `methods` / `pay_period` 배열에 넣는다 — 기존 zmes 전송도 그랬고, 담당자가 읽는 값이 바뀌면 안 된다.
 
 ### 11.4 히든 마케팅 필드
 
@@ -378,3 +382,59 @@ R2 라이프사이클: `submissions/` 프리픽스에 3년 후 자동 삭제 규
 | `etc.마케팅경로` | `ref` |
 | `etc.이전페이지` | `referer_page` |
 | `file1` / `file2` | `attachments[0]` / `attachments[1]` (공개 URL 대신 서명 링크) |
+
+### 11.7 SWV 스키마 — 검증 규칙의 정본
+
+`public/wp-json/contact-form-7/v1/contact-forms/{583,584,631}/feedback/schema` 에 **원본 사이트에서 스냅샷한 실제 스키마 파일이 이미 존재한다** (포팅 당시 `port_page.py`가 받아둠). 이것이 원본 검증 규칙과 에러 문구의 정본이며, 서버 검증은 여기에 맞춘다. 새로 만들지 말고 이 파일을 읽어서 쓴다.
+
+에러 문구는 CF7 기본값이 아니라 사이트가 커스터마이즈한 값이다. 서버 응답이 다른 문구를 쓰면 클라이언트 검증을 우회했을 때만 다른 메시지가 뜨는 불일치가 생기므로, **아래 문구를 그대로 쓴다.**
+
+| 폼 | 규칙 | 필드 | 값 | 에러 문구 |
+|---|---|---|---|---|
+| 584 | requiredfile | `file-71` | | 성함, 연락처, 최소 1개의 견적서 파일첨부 부탁드립니다. |
+| 584 | file | `file-71`, `file-72` | `.jpg .jpeg .png .pdf` | 이 유형의 파일을 업로드하도록 허용하지 않습니다. |
+| 584 | maxfilesize | `file-71`, `file-72` | 10485760 | 파일이 너무 큽니다. |
+| 584 | required | `your-name`, `your-phone` | | 성함, 연락처, 최소 1개의 견적서 파일첨부 부탁드립니다. |
+| 584 | tel | `your-phone` | | 전화번호를 정확하게 입력해주세요. |
+| 584 | minlength | `your-phone` | 13 | 정확한 휴대폰 번호를 입력해주세요. |
+| 584 | maxlength | `your-name`, `your-phone` | 400 | 내용이 너무 깁니다. |
+| 584 | maxlength | `your-message` | 2000 | 내용이 너무 깁니다. |
+| 583 | required | `your-method`, `your-pay`, `your-name`, `your-phone`, `your-car` | | 정확하게 입력 부탁드립니다. |
+| 583 | tel | `your-phone` | | 정확한 휴대폰 번호를 입력해주세요. |
+| 583 | minlength | `your-phone` | 13 | 정확한 휴대폰 번호를 입력해주세요. |
+| 583 | maxlength | `your-name`, `your-phone`, `your-car` | 400 | 내용이 너무 깁니다. |
+| 583 | maxlength | `your-message` | 2000 | 내용이 너무 깁니다. |
+| 583 | enum | `your-method`, `your-pay` | §11.3 목록 | 이 입력란을 통해 정의되지 않은 값이 제출되었습니다. |
+| 631 | required | `your-method`, `your-pay`, `your-name`, `your-telephone`, `your-car` | | 정확하게 입력 부탁드립니다. |
+| 631 | tel | `your-telephone` | | 정확한 휴대폰 번호를 입력해주세요. |
+| 631 | maxlength | `your-name`, `your-telephone`, `your-car` | 400 | 내용이 너무 깁니다. |
+| 631 | maxlength | `your-message` | 2000 | 내용이 너무 깁니다. |
+| 631 | enum | `your-method`, `your-pay` | §11.3 목록 | 이 입력란을 통해 정의되지 않은 값이 제출되었습니다. |
+
+읽어낸 사실 네 가지:
+
+1. **`your-method[]`·`your-pay[]`는 필수다.** 마크업에는 필수 표시가 없어 놓치기 쉽다.
+2. **`file-71`은 확정적으로 필수다.** 에러 문구가 의도를 직접 말해준다. 라벨의 "(선택)"이 오류다.
+3. **최대 파일 크기는 10485760바이트(10MB)** — 추정이 아니라 원본 설정값이다.
+4. **`invalid_fields`의 `field` 값에는 `[]`가 붙지 않는다** (`your-method`, `your-pay`). 전송 시 필드명은 `your-method[]`지만 에러를 붙일 때는 `your-method`다. 마크업의 `data-name` 속성과 일치시켜야 빨간 툴팁이 올바른 위치에 뜬다.
+
+`tel` 규칙은 CF7의 `wpcf7_is_tel()`과 같은 판정을 쓴다: 숫자·`+`·`(`·`)`·`/`·`.`·`-`·공백 외의 문자가 있으면 실패.
+
+폼 2470(리스료 계산기)의 스키마 파일도 존재하지만 제출 처리 대상이 아니므로 손대지 않는다.
+
+### 11.8 상태 문구 — 원본 WordPress DB 실측
+
+`.wpcf7-response-output`에 뜨는 큰 메시지다. 스키마 파일에는 없고 미러 HTML에도 없다. 원본 서버의 `wp_postmeta` 에서 `meta_key='_messages'`를 조회해 얻었다 (CF7이 폼별로 저장하는 값).
+
+| CF7 키 | 우리 status | 584 (견적서 비교분석) | 583 (신차·중고차) | 631 (차량시공) |
+|---|---|---|---|---|
+| `mail_sent_ok` | `mail_sent` | 신청완료 되었습니다. 빠른 연락 드리도록 하겠습니다. | 찾아주셔서 감사합니다. 빠른 연락 드리도록 하겠습니다. | 찾아주셔서 감사합니다. 빠른 연락 드리도록 하겠습니다. |
+| `mail_sent_ng` | `mail_failed` | 발송 중 오류가 발생했습니다. 다시 시도해주세요. | 상담신청 발송 중 오류가 발생했습니다. 다시 시도해주세요. | 상담신청 발송 중 오류가 발생했습니다. 다시 시도해주세요. |
+| `validation_error` | `validation_failed` | 성함, 연락처, 최소 1개의 견적서 파일첨부 부탁드립니다. | 성함, 연락처, 차종, 구매방식, 구매시기를 모두 입력 부탁드립니다. | 상담신청 발송 중 오류가 발생했습니다. 다시 시도해주세요. |
+| `spam` | `spam` | 안내문를 보내는 도중 오류가 발생했습니다. 나중에 다시 시도하기 바랍니다. | 메시지를 보내는 도중 오류가 발생했습니다. 나중에 다시 시도해주세요. | 메시지를 보내는 도중 오류가 발생했습니다. 나중에 다시 시도해주세요. |
+
+오타(`안내문를`, 631의 `validation_error`가 발송 실패 문구인 것)까지 **원문 그대로 옮긴다.** 우리가 고치면 원본과 화면이 달라지고, 무엇이 의도이고 무엇이 실수인지는 발주처가 판단할 일이다. 문구 정리는 후속 과제로 남긴다.
+
+583의 `validation_error` 문구가 "성함, 연락처, 차종, **구매방식, 구매시기**를 모두 입력"이라는 점이 §11.2에서 체크박스를 필수로 판정한 것과 일치한다.
+
+DB에는 `accept_terms` 문구("상담신청은 개인정보 동의를 체크하셔야 합니다.")도 남아 있다. 즉 **개인정보 동의 체크박스가 한때 설정되어 있었다가 폼에서 빠진 것**이다. §2의 관찰과 맞아떨어진다.

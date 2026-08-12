@@ -17,6 +17,7 @@
 - `src/raw/*.html` 및 `src/pages/**/index.astro` 는 **수정하지 않는다.** 예외는 Task 12의 Turnstile 위젯 삽입 한 곳뿐이며, 그 변경도 폼 4종의 submit 버튼 앞으로 한정한다.
 - 순수 로직 모듈(`src/lib/forms/*.ts`)은 `cloudflare:workers`를 import하지 않는다. import하는 순간 vitest에서 실행 불가능해진다. 바인딩·시크릿은 엔드포인트가 읽어서 인자로 넘긴다.
 - 체크박스 값·`your-subject` 문자열은 **원문 그대로** 저장한다. 번역·정규화·매핑 금지.
+- 검증 규칙과 에러 문구의 정본은 저장소에 이미 있는 `public/wp-json/contact-form-7/v1/contact-forms/{583,584,631}/feedback/schema` 다 (원본 사이트에서 스냅샷된 파일). 이 계획의 내용과 스키마가 다르면 **스키마가 맞다.** 스키마 파일은 수정하지 않는다.
 - Supabase는 **service role 키로만** 접근한다. anon 키를 코드에 넣지 않는다. RLS는 켜되 정책을 만들지 않는다.
 - 시크릿을 저장소에 커밋하지 않는다. 로컬은 `.dev.vars`(gitignore), 운영은 `wrangler secret`.
 - 커밋 메시지는 한국어 conventional commit (`feat:`, `test:`, `chore:`, `docs:`).
@@ -233,16 +234,43 @@ git commit -m "chore: Cloudflare 어댑터·wrangler·vitest 셋업"
 - Consumes: 없음
 - Produces:
   - `type FormKey = 'analysis' | 'consulting-new-car' | 'consulting-used-car' | 'consulting-detailing'`
-  - `interface FormDefinition { key, cf7Id, containerPost, unitTag, subject, phoneField, requiredFields, methodValues, payValues, refField, maxFiles, fileFields }`
+  - `interface FormMessages { required, tooLong, tel, telShort, notEnum, fileRequired, fileType, fileTooBig }`
+  - `interface StatusMessages { mail_sent, mail_failed, validation_failed, spam }`
+  - `interface FormDefinition { key, cf7Id, containerPost, unitTag, subject, phoneField, phoneMinLength, requiredFields, methodValues, payValues, refField, fileFields, messages, statusMessages }`
   - `const FORMS: readonly FormDefinition[]`
   - `function findForm(cf7Id: string, containerPost: string): FormDefinition | null`
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+문구는 CF7 기본값이 아니라 사이트가 커스터마이즈한 값이고 폼마다 다르다. 출처가 둘로 나뉜다.
+
+- **필드별 에러 문구**(`messages`) — `public/.../feedback/schema` 파일. 설계 문서 §11.7.
+- **상태 문구**(`statusMessages`, `.wpcf7-response-output`에 뜨는 큰 메시지) — 원본 WordPress DB의 `wp_postmeta._messages`. 설계 문서 §11.8. 미러 HTML에는 없어서 서버에서 조회한 값이다.
+
+문구가 원본과 어긋나면 사용자가 보는 화면이 달라진다.
+
+- [ ] **Step 1: 정본 스키마를 눈으로 확인한다**
+
+```bash
+python3 -c "
+import json,glob
+for f in sorted(glob.glob('public/wp-json/contact-form-7/v1/contact-forms/*/feedback/schema')):
+    fid=f.split('/')[-3]
+    if fid=='2470': continue
+    d=json.load(open(f))
+    print('==', fid)
+    for r in d['rules']:
+        print(' ', r['rule'], r['field'], r.get('threshold',''), r.get('accept',''), '->', r.get('error',''))
+"
+```
+
+이 출력이 아래 구현의 `messages`·`requiredFields`와 일치해야 한다. 다르면 **스키마 파일이 맞고 이 계획이 틀린 것이다.** 스키마를 따르고 계획 문서를 고친다.
+
+- [ ] **Step 2: 실패하는 테스트를 쓴다**
 
 `tests/forms/definitions.test.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { FORMS, findForm } from '../../src/lib/forms/definitions';
 
 describe('findForm', () => {
@@ -277,6 +305,12 @@ describe('FORMS', () => {
     expect(a.refField).toBe('dl_ref');
   });
 
+  it('detailing만 전화 최소 길이 제한이 없다', () => {
+    expect(findForm('584', '609')!.phoneMinLength).toBe(13);
+    expect(findForm('583', '580')!.phoneMinLength).toBe(13);
+    expect(findForm('631', '626')!.phoneMinLength).toBeNull();
+  });
+
   it('analysis만 파일 필드를 가진다', () => {
     expect(findForm('584', '609')!.fileFields).toEqual(['file-71', 'file-72']);
     expect(findForm('583', '580')!.fileFields).toEqual([]);
@@ -292,20 +326,76 @@ describe('FORMS', () => {
     ]);
   });
 
-  it('필수 필드가 폼별로 맞다', () => {
-    expect(findForm('584', '609')!.requiredFields).toEqual(['your-name', 'your-phone', 'file-71']);
-    expect(findForm('583', '592')!.requiredFields).toEqual(['your-name', 'your-phone', 'your-car']);
-    expect(findForm('631', '626')!.requiredFields).toEqual(['your-name', 'your-telephone', 'your-car']);
+  it('체크박스 두 개도 필수다', () => {
+    expect(findForm('583', '592')!.requiredFields).toEqual([
+      'your-name', 'your-phone', 'your-car', 'your-method[]', 'your-pay[]',
+    ]);
+    expect(findForm('631', '626')!.requiredFields).toEqual([
+      'your-name', 'your-telephone', 'your-car', 'your-method[]', 'your-pay[]',
+    ]);
+  });
+
+  it('analysis는 첨부 1개가 필수다', () => {
+    expect(findForm('584', '609')!.requiredFields).toEqual([
+      'your-name', 'your-phone', 'file-71',
+    ]);
+  });
+
+  it('에러 문구가 원본 SWV 스키마와 같다', () => {
+    const schema = (id: string) =>
+      JSON.parse(
+        readFileSync(
+          `public/wp-json/contact-form-7/v1/contact-forms/${id}/feedback/schema`,
+          'utf8',
+        ),
+      ) as { rules: { rule: string; field: string; error?: string }[] };
+
+    const errorOf = (id: string, rule: string, field: string) =>
+      schema(id).rules.find((r) => r.rule === rule && r.field === field)?.error;
+
+    const analysis = findForm('584', '609')!;
+    expect(analysis.messages.required).toBe(errorOf('584', 'required', 'your-name'));
+    expect(analysis.messages.fileRequired).toBe(errorOf('584', 'requiredfile', 'file-71'));
+    expect(analysis.messages.fileType).toBe(errorOf('584', 'file', 'file-71'));
+    expect(analysis.messages.fileTooBig).toBe(errorOf('584', 'maxfilesize', 'file-71'));
+    expect(analysis.messages.tel).toBe(errorOf('584', 'tel', 'your-phone'));
+    expect(analysis.messages.telShort).toBe(errorOf('584', 'minlength', 'your-phone'));
+
+    const newCar = findForm('583', '580')!;
+    expect(newCar.messages.required).toBe(errorOf('583', 'required', 'your-name'));
+    expect(newCar.messages.tooLong).toBe(errorOf('583', 'maxlength', 'your-name'));
+    expect(newCar.messages.notEnum).toBe(errorOf('583', 'enum', 'your-method'));
+
+    const detailing = findForm('631', '626')!;
+    expect(detailing.messages.required).toBe(errorOf('631', 'required', 'your-name'));
+    expect(detailing.messages.tel).toBe(errorOf('631', 'tel', 'your-telephone'));
+  });
+
+  it('상태 문구가 폼마다 다르다', () => {
+    expect(findForm('584', '609')!.statusMessages.mail_sent).toBe(
+      '신청완료 되었습니다. 빠른 연락 드리도록 하겠습니다.',
+    );
+    expect(findForm('583', '580')!.statusMessages.mail_sent).toBe(
+      '찾아주셔서 감사합니다. 빠른 연락 드리도록 하겠습니다.',
+    );
+    expect(findForm('583', '592')!.statusMessages.validation_failed).toBe(
+      '성함, 연락처, 차종, 구매방식, 구매시기를 모두 입력 부탁드립니다.',
+    );
+    // 631은 원본에서 validation_error와 mail_sent_ng가 같은 문구로 설정되어 있다
+    const d = findForm('631', '626')!;
+    expect(d.statusMessages.validation_failed).toBe(d.statusMessages.mail_failed);
   });
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+이 마지막 테스트가 계획과 정본 스키마를 계속 묶어둔다. 문구를 잘못 옮기면 바로 실패한다.
+
+- [ ] **Step 3: 실패를 확인한다**
 
 Run: `npm test -- tests/forms/definitions.test.ts`
 Expected: FAIL — `Failed to resolve import "../../src/lib/forms/definitions"`
 
-- [ ] **Step 3: 구현한다**
+- [ ] **Step 4: 구현한다**
 
 `src/lib/forms/definitions.ts`:
 
@@ -315,6 +405,33 @@ export type FormKey =
   | 'consulting-new-car'
   | 'consulting-used-car'
   | 'consulting-detailing';
+
+/**
+ * 에러 문구. CF7 기본값이 아니라 사이트가 커스터마이즈한 값이라 폼마다 다르다.
+ * 정본은 public/wp-json/contact-form-7/v1/contact-forms/{id}/feedback/schema 다.
+ */
+export interface FormMessages {
+  required: string;
+  tooLong: string;
+  tel: string;
+  telShort: string;
+  notEnum: string;
+  fileRequired: string;
+  fileType: string;
+  fileTooBig: string;
+}
+
+/**
+ * .wpcf7-response-output에 뜨는 상태 문구.
+ * 원본 WordPress DB의 wp_postmeta._messages에서 가져온 값이다
+ * (mail_sent_ok / mail_sent_ng / validation_error / spam).
+ */
+export interface StatusMessages {
+  mail_sent: string;
+  mail_failed: string;
+  validation_failed: string;
+  spam: string;
+}
 
 export interface FormDefinition {
   /** DB의 form_key 컬럼에 저장되는 값 */
@@ -329,20 +446,43 @@ export interface FormDefinition {
   subject: string;
   /** 이 폼에서 연락처를 담는 필드 이름 */
   phoneField: 'your-phone' | 'your-telephone';
-  /** 비어 있으면 validation_failed를 내는 필드들 */
+  /** SWV minlength 규칙. detailing에는 없다 */
+  phoneMinLength: number | null;
+  /** 비어 있으면 validation_failed를 내는 필드들. 체크박스는 `[]`를 포함한 전송 이름이다 */
   requiredFields: string[];
-  /** your-method[]로 허용되는 값. 목록 밖의 값은 버린다 */
+  /** your-method[]로 허용되는 값 */
   methodValues: string[];
-  /** your-pay[]로 허용되는 값. 목록 밖의 값은 버린다 */
+  /** your-pay[]로 허용되는 값 */
   payValues: string[];
   /** 이 폼의 마케팅 유입 히든 필드 이름 */
   refField: 'dl_ref' | 'it_ref';
   /** 첨부 파일 필드. 없으면 빈 배열 */
   fileFields: string[];
+  messages: FormMessages;
+  statusMessages: StatusMessages;
 }
 
 const PURCHASE_METHODS = ['리스', '장기렌트', '할부', '현금'];
 const PURCHASE_TIMING = ['좋은 조건 즉시', '이번달 구매 예정', '다음달 계획 중', '3개월 이상 예정'];
+
+const TOO_LONG = '내용이 너무 깁니다.';
+const NOT_ENUM = '이 입력란을 통해 정의되지 않은 값이 제출되었습니다.';
+const CONSULTING_MESSAGES: FormMessages = {
+  required: '정확하게 입력 부탁드립니다.',
+  tooLong: TOO_LONG,
+  tel: '정확한 휴대폰 번호를 입력해주세요.',
+  telShort: '정확한 휴대폰 번호를 입력해주세요.',
+  notEnum: NOT_ENUM,
+  // consulting 폼에는 첨부가 없어 쓰이지 않는다
+  fileRequired: '',
+  fileType: '',
+  fileTooBig: '',
+};
+
+// 583과 631은 mail_sent_ok / mail_sent_ng / spam이 동일하다. validation_error만 다르다.
+const CONSULTING_SPAM = '메시지를 보내는 도중 오류가 발생했습니다. 나중에 다시 시도해주세요.';
+const CONSULTING_SENT = '찾아주셔서 감사합니다. 빠른 연락 드리도록 하겠습니다.';
+const CONSULTING_FAILED = '상담신청 발송 중 오류가 발생했습니다. 다시 시도해주세요.';
 
 export const FORMS: readonly FormDefinition[] = [
   {
@@ -352,12 +492,29 @@ export const FORMS: readonly FormDefinition[] = [
     unitTag: 'wpcf7-f584-p609-o1',
     subject: '견적서 비교분석',
     phoneField: 'your-phone',
-    // file-71은 라벨이 "(선택)"이지만 마크업상 wpcf7-validates-as-required다. 원본 동작을 따른다.
+    phoneMinLength: 13,
+    // file-71은 라벨이 "(선택)"이지만 SWV에 requiredfile 규칙이 있다. 라벨 쪽이 오류다.
     requiredFields: ['your-name', 'your-phone', 'file-71'],
     methodValues: [],
     payValues: [],
     refField: 'dl_ref',
     fileFields: ['file-71', 'file-72'],
+    messages: {
+      required: '성함, 연락처, 최소 1개의 견적서 파일첨부 부탁드립니다.',
+      tooLong: TOO_LONG,
+      tel: '전화번호를 정확하게 입력해주세요.',
+      telShort: '정확한 휴대폰 번호를 입력해주세요.',
+      notEnum: NOT_ENUM,
+      fileRequired: '성함, 연락처, 최소 1개의 견적서 파일첨부 부탁드립니다.',
+      fileType: '이 유형의 파일을 업로드하도록 허용하지 않습니다.',
+      fileTooBig: '파일이 너무 큽니다.',
+    },
+    statusMessages: {
+      mail_sent: '신청완료 되었습니다. 빠른 연락 드리도록 하겠습니다.',
+      mail_failed: '발송 중 오류가 발생했습니다. 다시 시도해주세요.',
+      validation_failed: '성함, 연락처, 최소 1개의 견적서 파일첨부 부탁드립니다.',
+      spam: '안내문를 보내는 도중 오류가 발생했습니다. 나중에 다시 시도하기 바랍니다.',
+    },
   },
   {
     key: 'consulting-new-car',
@@ -366,11 +523,19 @@ export const FORMS: readonly FormDefinition[] = [
     unitTag: 'wpcf7-f583-p580-o1',
     subject: '신차 상담신청',
     phoneField: 'your-phone',
-    requiredFields: ['your-name', 'your-phone', 'your-car'],
+    phoneMinLength: 13,
+    requiredFields: ['your-name', 'your-phone', 'your-car', 'your-method[]', 'your-pay[]'],
     methodValues: PURCHASE_METHODS,
     payValues: PURCHASE_TIMING,
     refField: 'dl_ref',
     fileFields: [],
+    messages: CONSULTING_MESSAGES,
+    statusMessages: {
+      mail_sent: CONSULTING_SENT,
+      mail_failed: CONSULTING_FAILED,
+      validation_failed: '성함, 연락처, 차종, 구매방식, 구매시기를 모두 입력 부탁드립니다.',
+      spam: CONSULTING_SPAM,
+    },
   },
   {
     key: 'consulting-used-car',
@@ -379,11 +544,19 @@ export const FORMS: readonly FormDefinition[] = [
     unitTag: 'wpcf7-f583-p592-o1',
     subject: '신차 상담신청',
     phoneField: 'your-phone',
-    requiredFields: ['your-name', 'your-phone', 'your-car'],
+    phoneMinLength: 13,
+    requiredFields: ['your-name', 'your-phone', 'your-car', 'your-method[]', 'your-pay[]'],
     methodValues: PURCHASE_METHODS,
     payValues: PURCHASE_TIMING,
     refField: 'dl_ref',
     fileFields: [],
+    messages: CONSULTING_MESSAGES,
+    statusMessages: {
+      mail_sent: CONSULTING_SENT,
+      mail_failed: CONSULTING_FAILED,
+      validation_failed: '성함, 연락처, 차종, 구매방식, 구매시기를 모두 입력 부탁드립니다.',
+      spam: CONSULTING_SPAM,
+    },
   },
   {
     key: 'consulting-detailing',
@@ -392,11 +565,20 @@ export const FORMS: readonly FormDefinition[] = [
     unitTag: 'wpcf7-f631-p626-o1',
     subject: '차량시공 문의',
     phoneField: 'your-telephone',
-    requiredFields: ['your-name', 'your-telephone', 'your-car'],
+    phoneMinLength: null,
+    requiredFields: ['your-name', 'your-telephone', 'your-car', 'your-method[]', 'your-pay[]'],
     methodValues: ['신차패키지', '디테일링', '유리막/광택', 'PPF/랩핑', '가죽코팅', '기타'],
     payValues: ['예약가능즉시', '1주일 이내', '1개월 이내', '미정'],
     refField: 'it_ref',
     fileFields: [],
+    messages: CONSULTING_MESSAGES,
+    statusMessages: {
+      mail_sent: CONSULTING_SENT,
+      mail_failed: CONSULTING_FAILED,
+      // 원본에서 validation_error가 mail_sent_ng와 같은 문구로 설정되어 있다. 그대로 따른다.
+      validation_failed: CONSULTING_FAILED,
+      spam: CONSULTING_SPAM,
+    },
   },
 ];
 
@@ -405,18 +587,16 @@ export const FORMS: readonly FormDefinition[] = [
  * (_wpcf7, _wpcf7_container_post) 쌍으로 찾는다.
  */
 export function findForm(cf7Id: string, containerPost: string): FormDefinition | null {
-  return (
-    FORMS.find((f) => f.cf7Id === cf7Id && f.containerPost === containerPost) ?? null
-  );
+  return FORMS.find((f) => f.cf7Id === cf7Id && f.containerPost === containerPost) ?? null;
 }
 ```
 
-- [ ] **Step 4: 테스트 통과를 확인한다**
+- [ ] **Step 5: 테스트 통과를 확인한다**
 
 Run: `npm test -- tests/forms/definitions.test.ts`
-Expected: PASS (6 tests)
+Expected: PASS (10 tests)
 
-- [ ] **Step 5: 커밋**
+- [ ] **Step 6: 커밋**
 
 ```bash
 git add src/lib/forms/definitions.ts tests/forms/definitions.test.ts
@@ -435,9 +615,11 @@ git commit -m "feat: 컨택폼 4종 정의 모듈"
 - Consumes: `FormDefinition` (Task 2)
 - Produces:
   - `function normalizePhone(raw: string): string`
-  - `function pickAllowed(values: string[], allowed: string[]): string[]`
-  - `interface TextResult { name: string; phone: string; car: string | null; methods: string[]; payPeriod: string[]; message: string | null; ref: string | null; refererPage: string | null }`
-  - `function validateText(def: FormDefinition, get: (name: string) => string | null, getAll: (name: string) => string[]): { ok: true; data: TextResult } | { ok: false; invalid: { field: string; message: string }[] }`
+  - `function isValidTel(raw: string): boolean`
+  - `interface TextResult { name, phone, car, methods, payPeriod, message, ref, refererPage }`
+  - `function validateText(def, get, getAll): { ok: true; data: TextResult } | { ok: false; invalid: { field: string; message: string }[] }`
+
+`invalid_fields`의 `field` 값에는 `[]`를 붙이지 않는다 (`your-method`). 마크업의 `data-name` 속성과 일치해야 빨간 툴팁이 올바른 위치에 뜬다. 전송 이름은 `your-method[]`이므로 읽을 때와 쓸 때 이름이 다르다.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
@@ -445,7 +627,7 @@ git commit -m "feat: 컨택폼 4종 정의 모듈"
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { normalizePhone, pickAllowed, validateText } from '../../src/lib/forms/validate';
+import { normalizePhone, isValidTel, validateText } from '../../src/lib/forms/validate';
 import { findForm } from '../../src/lib/forms/definitions';
 
 describe('normalizePhone', () => {
@@ -466,23 +648,24 @@ describe('normalizePhone', () => {
 
   it('해석할 수 없으면 원문을 다듬어서 돌려준다', () => {
     expect(normalizePhone('  +82 10-1234-5678 ')).toBe('+82 10-1234-5678');
-    expect(normalizePhone('전화주세요')).toBe('전화주세요');
   });
 });
 
-describe('pickAllowed', () => {
-  it('허용 목록에 있는 값만 남긴다', () => {
-    expect(pickAllowed(['리스', '해킹시도', '현금'], ['리스', '장기렌트', '할부', '현금']))
-      .toEqual(['리스', '현금']);
+describe('isValidTel', () => {
+  it('CF7 wpcf7_is_tel과 같은 문자만 허용한다', () => {
+    expect(isValidTel('010-1234-5678')).toBe(true);
+    expect(isValidTel('+82 (10) 1234.5678')).toBe(true);
+    expect(isValidTel('02/123/4567')).toBe(true);
   });
 
-  it('허용 목록의 순서가 아니라 입력 순서를 유지한다', () => {
-    expect(pickAllowed(['현금', '리스'], ['리스', '장기렌트', '할부', '현금']))
-      .toEqual(['현금', '리스']);
+  it('숫자가 하나도 없으면 거부한다', () => {
+    expect(isValidTel('---')).toBe(false);
+    expect(isValidTel('')).toBe(false);
   });
 
-  it('중복을 제거한다', () => {
-    expect(pickAllowed(['리스', '리스'], ['리스'])).toEqual(['리스']);
+  it('한글이나 알파벳이 섞이면 거부한다', () => {
+    expect(isValidTel('전화주세요')).toBe(false);
+    expect(isValidTel('010-1234-5678 내선')).toBe(false);
   });
 });
 
@@ -501,16 +684,17 @@ function makeGetters(fields: Record<string, string | string[]>) {
 describe('validateText', () => {
   const newCar = findForm('583', '580')!;
   const detailing = findForm('631', '626')!;
+  const analysis = findForm('584', '609')!;
 
   it('정상 입력을 통과시킨다', () => {
     const { get, getAll } = makeGetters({
       'your-name': '홍길동',
-      'your-phone': '01012345678',
+      'your-phone': '010-1234-5678',
       'your-car': 'BMW 520i',
       'your-method[]': ['리스', '할부'],
       'your-pay[]': ['좋은 조건 즉시'],
       'your-message': '견적 부탁드립니다',
-      'dl_ref': 'naver',
+      dl_ref: 'naver',
       'referer-page': '/lease/',
     });
     const r = validateText(newCar, get, getAll);
@@ -528,13 +712,40 @@ describe('validateText', () => {
     });
   });
 
-  it('필수 필드가 비면 invalid를 낸다', () => {
+  it('필수 필드가 비면 원본 문구로 invalid를 낸다', () => {
     const { get, getAll } = makeGetters({ 'your-name': '  ', 'your-phone': '', 'your-car': 'X' });
     const r = validateText(newCar, get, getAll);
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.invalid.map((i) => i.field)).toEqual(['your-name', 'your-phone']);
-    expect(r.invalid[0].message).toBe('입력란을 작성해 주세요.');
+    expect(r.invalid).toEqual([
+      { field: 'your-name', message: '정확하게 입력 부탁드립니다.' },
+      { field: 'your-phone', message: '정확하게 입력 부탁드립니다.' },
+      { field: 'your-method', message: '정확하게 입력 부탁드립니다.' },
+      { field: 'your-pay', message: '정확하게 입력 부탁드립니다.' },
+    ]);
+  });
+
+  it('체크박스 에러의 field에는 대괄호가 없다', () => {
+    const { get, getAll } = makeGetters({
+      'your-name': '홍길동',
+      'your-phone': '010-1234-5678',
+      'your-car': 'X',
+      'your-pay[]': ['좋은 조건 즉시'],
+    });
+    const r = validateText(newCar, get, getAll);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.invalid).toEqual([{ field: 'your-method', message: '정확하게 입력 부탁드립니다.' }]);
+  });
+
+  it('analysis는 별도 문구를 쓰고 체크박스를 요구하지 않는다', () => {
+    const { get, getAll } = makeGetters({ 'your-name': '', 'your-phone': '010-1234-5678' });
+    const r = validateText(analysis, get, getAll);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.invalid).toEqual([
+      { field: 'your-name', message: '성함, 연락처, 최소 1개의 견적서 파일첨부 부탁드립니다.' },
+    ]);
   });
 
   it('detailing은 your-telephone을 연락처로 읽는다', () => {
@@ -542,7 +753,9 @@ describe('validateText', () => {
       'your-name': '홍길동',
       'your-telephone': '010-1111-2222',
       'your-car': '아반떼',
-      'it_ref': 'kakao',
+      'your-method[]': ['디테일링'],
+      'your-pay[]': ['미정'],
+      it_ref: 'kakao',
     });
     const r = validateText(detailing, get, getAll);
     expect(r.ok).toBe(true);
@@ -551,36 +764,86 @@ describe('validateText', () => {
     expect(r.data.ref).toBe('kakao');
   });
 
-  it('허용 목록 밖 체크박스 값을 버린다', () => {
+  it('허용 목록 밖 체크박스 값은 버리지 않고 거부한다', () => {
     const { get, getAll } = makeGetters({
       'your-name': '홍길동',
-      'your-phone': '01012345678',
+      'your-phone': '010-1234-5678',
       'your-car': 'X',
       'your-method[]': ['리스', '<script>'],
+      'your-pay[]': ['좋은 조건 즉시'],
     });
     const r = validateText(newCar, get, getAll);
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.data.methods).toEqual(['리스']);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.invalid).toEqual([
+      { field: 'your-method', message: '이 입력란을 통해 정의되지 않은 값이 제출되었습니다.' },
+    ]);
+  });
+
+  it('전화번호 형식이 아니면 거부한다', () => {
+    const { get, getAll } = makeGetters({
+      'your-name': '홍길동',
+      'your-phone': '전화주세요',
+      'your-car': 'X',
+      'your-method[]': ['리스'],
+      'your-pay[]': ['좋은 조건 즉시'],
+    });
+    const r = validateText(newCar, get, getAll);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.invalid).toEqual([
+      { field: 'your-phone', message: '정확한 휴대폰 번호를 입력해주세요.' },
+    ]);
+  });
+
+  it('minlength 13 미만이면 거부한다', () => {
+    const { get, getAll } = makeGetters({
+      'your-name': '홍길동',
+      'your-phone': '010-123',
+      'your-car': 'X',
+      'your-method[]': ['리스'],
+      'your-pay[]': ['좋은 조건 즉시'],
+    });
+    const r = validateText(newCar, get, getAll);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.invalid).toEqual([
+      { field: 'your-phone', message: '정확한 휴대폰 번호를 입력해주세요.' },
+    ]);
+  });
+
+  it('detailing은 최소 길이 제한이 없다', () => {
+    const { get, getAll } = makeGetters({
+      'your-name': '홍길동',
+      'your-telephone': '02-123',
+      'your-car': 'X',
+      'your-method[]': ['디테일링'],
+      'your-pay[]': ['미정'],
+    });
+    expect(validateText(detailing, get, getAll).ok).toBe(true);
   });
 
   it('길이 초과를 잘라내지 않고 invalid로 처리한다', () => {
     const { get, getAll } = makeGetters({
       'your-name': 'ㄱ'.repeat(401),
-      'your-phone': '01012345678',
+      'your-phone': '010-1234-5678',
       'your-car': 'X',
+      'your-method[]': ['리스'],
+      'your-pay[]': ['좋은 조건 즉시'],
     });
     const r = validateText(newCar, get, getAll);
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.invalid[0]).toEqual({ field: 'your-name', message: '입력이 너무 깁니다.' });
+    expect(r.invalid).toEqual([{ field: 'your-name', message: '내용이 너무 깁니다.' }]);
   });
 
   it('선택 필드가 없으면 null이다', () => {
     const { get, getAll } = makeGetters({
       'your-name': '홍길동',
-      'your-phone': '01012345678',
+      'your-phone': '010-1234-5678',
       'your-car': 'X',
+      'your-method[]': ['리스'],
+      'your-pay[]': ['좋은 조건 즉시'],
     });
     const r = validateText(newCar, get, getAll);
     expect(r.ok).toBe(true);
@@ -588,7 +851,6 @@ describe('validateText', () => {
     expect(r.data.message).toBeNull();
     expect(r.data.ref).toBeNull();
     expect(r.data.refererPage).toBeNull();
-    expect(r.data.methods).toEqual([]);
   });
 });
 ```
@@ -604,10 +866,6 @@ Expected: FAIL — 모듈을 찾을 수 없음
 
 ```ts
 import type { FormDefinition } from './definitions';
-
-/** CF7 ko_KR 기본 문구와 같은 텍스트를 쓴다 */
-export const MSG_REQUIRED = '입력란을 작성해 주세요.';
-export const MSG_TOO_LONG = '입력이 너무 깁니다.';
 
 const MAX_TEXT = 400;
 const MAX_MESSAGE = 2000;
@@ -630,16 +888,11 @@ export function normalizePhone(raw: string): string {
   return trimmed;
 }
 
-/** 허용 목록에 있는 값만, 입력 순서대로, 중복 없이 남긴다 */
-export function pickAllowed(values: string[], allowed: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const v of values) {
-    if (!allowed.includes(v) || seen.has(v)) continue;
-    seen.add(v);
-    out.push(v);
-  }
-  return out;
+/** CF7 wpcf7_is_tel()과 같은 판정: 허용 문자만 쓰였고 숫자가 하나 이상 있어야 한다 */
+export function isValidTel(raw: string): boolean {
+  const t = raw.trim();
+  if (!/\d/.test(t)) return false;
+  return /^[+]?[0-9()/.\- ]+$/.test(t);
 }
 
 export interface TextResult {
@@ -663,6 +916,11 @@ function optional(raw: string | null, max: number): string | null {
   return t === '' ? null : t.slice(0, max);
 }
 
+/** 전송 이름(your-method[])을 에러용 이름(your-method)으로 바꾼다 */
+function errorFieldName(name: string): string {
+  return name.endsWith('[]') ? name.slice(0, -2) : name;
+}
+
 /**
  * 파일을 제외한 모든 입력을 검증한다.
  * get은 단일 값, getAll은 다중 값(체크박스) 접근자다. FormData에 직접 의존하지 않아
@@ -673,16 +931,28 @@ export function validateText(
   get: (name: string) => string | null,
   getAll: (name: string) => string[],
 ): TextValidation {
+  const m = def.messages;
   const invalid: { field: string; message: string }[] = [];
+  const add = (field: string, message: string) => {
+    invalid.push({ field: errorFieldName(field), message });
+  };
 
-  // 필수 필드 (파일 필드는 여기서 다루지 않는다)
+  const methodsRaw = getAll('your-method[]');
+  const payRaw = getAll('your-pay[]');
+
+  // 1. 필수. 파일 필드는 엔드포인트가 따로 본다.
   for (const field of def.requiredFields) {
     if (def.fileFields.includes(field)) continue;
-    const v = (get(field) ?? '').trim();
-    if (v === '') invalid.push({ field, message: MSG_REQUIRED });
+    const empty =
+      field === 'your-method[]'
+        ? methodsRaw.length === 0
+        : field === 'your-pay[]'
+          ? payRaw.length === 0
+          : (get(field) ?? '').trim() === '';
+    if (empty) add(field, m.required);
   }
 
-  // 길이 제한
+  // 2. 길이
   for (const [field, max] of [
     ['your-name', MAX_TEXT],
     [def.phoneField, MAX_TEXT],
@@ -690,21 +960,39 @@ export function validateText(
     ['your-message', MAX_MESSAGE],
   ] as const) {
     const v = get(field);
-    if (v !== null && v.trim().length > max) {
-      invalid.push({ field, message: MSG_TOO_LONG });
+    if (v !== null && v.trim().length > max) add(field, m.tooLong);
+  }
+
+  // 3. 전화 형식. 비어 있는 경우는 1번이 이미 잡았다.
+  const phoneRaw = (get(def.phoneField) ?? '').trim();
+  if (phoneRaw !== '') {
+    if (!isValidTel(phoneRaw)) {
+      add(def.phoneField, m.tel);
+    } else if (def.phoneMinLength !== null && phoneRaw.length < def.phoneMinLength) {
+      add(def.phoneField, m.telShort);
     }
   }
 
+  // 4. 체크박스 화이트리스트. 정상 브라우저에서는 나올 수 없는 입력이다.
+  for (const [field, raw, allowed] of [
+    ['your-method[]', methodsRaw, def.methodValues],
+    ['your-pay[]', payRaw, def.payValues],
+  ] as const) {
+    if (raw.some((v) => !allowed.includes(v))) add(field, m.notEnum);
+  }
+
   if (invalid.length > 0) return { ok: false, invalid };
+
+  const dedupe = (values: string[]) => Array.from(new Set(values));
 
   return {
     ok: true,
     data: {
       name: (get('your-name') ?? '').trim(),
-      phone: normalizePhone(get(def.phoneField) ?? ''),
+      phone: normalizePhone(phoneRaw),
       car: optional(get('your-car'), MAX_TEXT),
-      methods: pickAllowed(getAll('your-method[]'), def.methodValues),
-      payPeriod: pickAllowed(getAll('your-pay[]'), def.payValues),
+      methods: dedupe(methodsRaw),
+      payPeriod: dedupe(payRaw),
       message: optional(get('your-message'), MAX_MESSAGE),
       ref: optional(get(def.refField), MAX_TEXT),
       refererPage: optional(get('referer-page'), MAX_TEXT),
@@ -716,7 +1004,7 @@ export function validateText(
 - [ ] **Step 4: 테스트 통과를 확인한다**
 
 Run: `npm test -- tests/forms/validate.test.ts`
-Expected: PASS (13 tests)
+Expected: PASS (18 tests)
 
 - [ ] **Step 5: 커밋**
 
@@ -726,6 +1014,7 @@ git commit -m "feat: 컨택폼 입력 검증·전화번호 정규화"
 ```
 
 ---
+
 
 ### Task 4: 파일 검증 모듈
 
@@ -741,6 +1030,8 @@ git commit -m "feat: 컨택폼 입력 검증·전화번호 정규화"
   - `function sanitizeFilename(name: string): string`
   - `function r2Key(id: string, n: number, filename: string, at: Date): string`
   - `interface AttachmentMeta { n: number; filename: string; size: number; content_type: string; r2_key: string }`
+
+`MAX_FILE_BYTES = 10485760`은 추정이 아니라 원본 SWV 스키마의 `maxfilesize` threshold 값이다. 에러 문구는 폼 정의의 `messages`에 있으므로 이 모듈은 판정만 하고 문구를 갖지 않는다.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
@@ -1101,11 +1392,13 @@ git commit -m "feat: 첨부파일 서명 토큰과 IP 해시"
 - Test: `tests/forms/cf7.test.ts`
 
 **Interfaces:**
-- Consumes: 없음
+- Consumes: `FormDefinition` (Task 2)
 - Produces:
   - `type Cf7Status = 'mail_sent' | 'mail_failed' | 'validation_failed' | 'spam'`
-  - `const CF7_MESSAGES: Record<Cf7Status, string>`
-  - `function cf7Response(unitTag: string, status: Cf7Status, invalidFields?: { field: string; message: string }[]): Response`
+  - `const FALLBACK_MESSAGES: Record<Cf7Status, string>`
+  - `function cf7Response(unitTag: string, status: Cf7Status, message: string, invalidFields?: { field: string; message: string }[]): Response`
+
+상태 문구는 폼마다 다르므로(Task 2의 `statusMessages`) 이 모듈이 문구를 소유하지 않고 인자로 받는다. `FALLBACK_MESSAGES`는 폼 판정 자체가 실패해 어떤 문구를 쓸지 알 수 없을 때만 쓴다.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
@@ -1113,42 +1406,54 @@ git commit -m "feat: 첨부파일 서명 토큰과 IP 해시"
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { cf7Response, CF7_MESSAGES } from '../../src/lib/forms/cf7';
+import { cf7Response, FALLBACK_MESSAGES } from '../../src/lib/forms/cf7';
+import { findForm } from '../../src/lib/forms/definitions';
 
 describe('cf7Response', () => {
   it('성공 응답 형태가 CF7 규약과 맞는다', async () => {
-    const res = cf7Response('wpcf7-f584-p609-o1', 'mail_sent');
+    const def = findForm('584', '609')!;
+    const res = cf7Response(def.unitTag, 'mail_sent', def.statusMessages.mail_sent);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('application/json');
     expect(await res.json()).toEqual({
       into: '#wpcf7-f584-p609-o1',
       status: 'mail_sent',
-      message: CF7_MESSAGES.mail_sent,
+      message: '신청완료 되었습니다. 빠른 연락 드리도록 하겠습니다.',
       posted_data_hash: '',
       invalid_fields: [],
     });
   });
 
+  it('폼마다 다른 상태 문구를 그대로 싣는다', async () => {
+    const newCar = findForm('583', '580')!;
+    const res = cf7Response(newCar.unitTag, 'mail_sent', newCar.statusMessages.mail_sent);
+    expect((await res.json()).message).toBe(
+      '찾아주셔서 감사합니다. 빠른 연락 드리도록 하겠습니다.',
+    );
+  });
+
   it('검증 실패 시 invalid_fields를 담는다', async () => {
-    const res = cf7Response('wpcf7-f583-p580-o1', 'validation_failed', [
-      { field: 'your-name', message: '입력란을 작성해 주세요.' },
+    const def = findForm('583', '580')!;
+    const res = cf7Response(def.unitTag, 'validation_failed', def.statusMessages.validation_failed, [
+      { field: 'your-name', message: '정확하게 입력 부탁드립니다.' },
     ]);
     const body = await res.json();
     expect(body.status).toBe('validation_failed');
+    expect(body.message).toBe('성함, 연락처, 차종, 구매방식, 구매시기를 모두 입력 부탁드립니다.');
     expect(body.invalid_fields).toEqual([
-      { field: 'your-name', message: '입력란을 작성해 주세요.' },
+      { field: 'your-name', message: '정확하게 입력 부탁드립니다.' },
     ]);
   });
 
   it('CF7 JS가 fetch를 실패로 보지 않도록 항상 200을 낸다', () => {
-    expect(cf7Response('t', 'spam').status).toBe(200);
-    expect(cf7Response('t', 'mail_failed').status).toBe(200);
-    expect(cf7Response('t', 'validation_failed').status).toBe(200);
+    for (const s of ['spam', 'mail_failed', 'validation_failed'] as const) {
+      expect(cf7Response('t', s, FALLBACK_MESSAGES[s]).status).toBe(200);
+    }
   });
 
-  it('네 가지 상태 문구가 모두 한국어로 정의되어 있다', () => {
+  it('폴백 문구가 네 상태 모두 정의되어 있다', () => {
     for (const s of ['mail_sent', 'mail_failed', 'validation_failed', 'spam'] as const) {
-      expect(CF7_MESSAGES[s].length).toBeGreaterThan(0);
+      expect(FALLBACK_MESSAGES[s].length).toBeGreaterThan(0);
     }
   });
 });
@@ -1166,31 +1471,33 @@ Expected: FAIL — 모듈을 찾을 수 없음
 ```ts
 export type Cf7Status = 'mail_sent' | 'mail_failed' | 'validation_failed' | 'spam';
 
-/** CF7 ko_KR 기본 문구 */
-export const CF7_MESSAGES: Record<Cf7Status, string> = {
-  mail_sent: '메시지가 발송되었습니다. 감사합니다.',
-  mail_failed:
-    '메시지 발송 시도 중 오류가 발생했습니다. 나중에 다시 시도해 주세요.',
-  validation_failed:
-    '하나 이상의 필드에 오류가 있습니다. 확인 후 다시 시도해 주세요.',
-  spam: '메시지 발송 시도 중 오류가 발생했습니다. 나중에 다시 시도해 주세요.',
+/**
+ * 폼 판정 자체가 실패해 어떤 폼의 문구를 써야 할지 모를 때만 쓴다.
+ * 정상 경로에서는 FormDefinition.statusMessages를 쓴다.
+ */
+export const FALLBACK_MESSAGES: Record<Cf7Status, string> = {
+  mail_sent: '찾아주셔서 감사합니다. 빠른 연락 드리도록 하겠습니다.',
+  mail_failed: '발송 중 오류가 발생했습니다. 다시 시도해주세요.',
+  validation_failed: '정확하게 입력 부탁드립니다.',
+  spam: '메시지를 보내는 도중 오류가 발생했습니다. 나중에 다시 시도해주세요.',
 };
 
 /**
- * CF7 6.0.6 클라이언트는 응답의 status와 invalid_fields만 본다.
+ * CF7 6.0.6 클라이언트는 응답의 status, message, invalid_fields만 본다.
  * HTTP 상태는 항상 200이어야 한다. 4xx/5xx면 클라이언트가 fetch 자체를 실패로 처리해
  * 사용자에게 아무 메시지도 보여주지 않는다.
  */
 export function cf7Response(
   unitTag: string,
   status: Cf7Status,
+  message: string,
   invalidFields: { field: string; message: string }[] = [],
 ): Response {
   return new Response(
     JSON.stringify({
       into: `#${unitTag}`,
       status,
-      message: CF7_MESSAGES[status],
+      message,
       posted_data_hash: '',
       invalid_fields: invalidFields,
     }),
@@ -1202,7 +1509,7 @@ export function cf7Response(
 - [ ] **Step 4: 테스트 통과를 확인한다**
 
 Run: `npm test -- tests/forms/cf7.test.ts`
-Expected: PASS (4 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 5: 커밋**
 
@@ -1212,6 +1519,7 @@ git commit -m "feat: CF7 응답 JSON 생성"
 ```
 
 ---
+
 
 ### Task 7: Supabase 저장 모듈
 
@@ -1889,13 +2197,13 @@ Expected: PASS (4 tests)
 import type { APIRoute } from 'astro';
 import { env as cfEnv } from 'cloudflare:workers';
 import { findForm } from '../../../../../../lib/forms/definitions';
-import { validateText, MSG_REQUIRED } from '../../../../../../lib/forms/validate';
+import { validateText } from '../../../../../../lib/forms/validate';
 import {
   MAX_FILE_BYTES, MAX_FILES, detectFileType, sanitizeFilename, r2Key,
   type AttachmentMeta,
 } from '../../../../../../lib/forms/files';
 import { FILE_TOKEN_TTL_MS, signFileToken, hashIp } from '../../../../../../lib/forms/token';
-import { cf7Response } from '../../../../../../lib/forms/cf7';
+import { cf7Response, FALLBACK_MESSAGES } from '../../../../../../lib/forms/cf7';
 import {
   insertSubmission, updateEmailStatus, type SubmissionRow,
 } from '../../../../../../lib/forms/db';
@@ -1905,9 +2213,6 @@ import { readEnv } from '../../../../../../lib/forms/env';
 
 export const prerender = false;
 
-const MSG_BAD_FILE = '허용되지 않는 파일 형식입니다. jpg, png, pdf만 첨부할 수 있습니다.';
-const MSG_BIG_FILE = '파일 용량이 너무 큽니다. 10MB 이하만 첨부할 수 있습니다.';
-
 export const POST: APIRoute = async ({ request, params }) => {
   const env = readEnv(cfEnv as unknown as Record<string, unknown>);
 
@@ -1915,7 +2220,7 @@ export const POST: APIRoute = async ({ request, params }) => {
   try {
     form = await request.formData();
   } catch {
-    return cf7Response('unknown', 'spam');
+    return cf7Response('unknown', 'spam', FALLBACK_MESSAGES.spam);
   }
 
   const str = (name: string): string | null => {
@@ -1930,15 +2235,16 @@ export const POST: APIRoute = async ({ request, params }) => {
   const containerPost = str('_wpcf7_container_post') ?? '';
   const def = findForm(cf7Id, containerPost);
   if (!def || def.cf7Id !== params.id) {
-    return cf7Response(str('_wpcf7_unit_tag') ?? 'unknown', 'spam');
+    return cf7Response(str('_wpcf7_unit_tag') ?? 'unknown', 'spam', FALLBACK_MESSAGES.spam);
   }
   const unitTag = def.unitTag;
+  const msg = def.statusMessages;
 
   const ip = request.headers.get('cf-connecting-ip');
 
   // 2. Turnstile
   const passed = await verifyTurnstile(env.turnstileSecret, str('cf-turnstile-response'), ip);
-  if (!passed) return cf7Response(unitTag, 'spam');
+  if (!passed) return cf7Response(unitTag, 'spam', msg.spam);
 
   // 3. 텍스트 검증
   const text = validateText(def, str, strAll);
@@ -1956,20 +2262,20 @@ export const POST: APIRoute = async ({ request, params }) => {
 
     if (!isFile) {
       if (def.requiredFields.includes(field)) {
-        invalid.push({ field, message: MSG_REQUIRED });
+        invalid.push({ field, message: def.messages.fileRequired });
       }
       continue;
     }
     if (n >= MAX_FILES) continue;
     if (entry.size > MAX_FILE_BYTES) {
-      invalid.push({ field, message: MSG_BIG_FILE });
+      invalid.push({ field, message: def.messages.fileTooBig });
       continue;
     }
 
     const body = await entry.arrayBuffer();
     const type = detectFileType(new Uint8Array(body.slice(0, 8)));
     if (!type) {
-      invalid.push({ field, message: MSG_BAD_FILE });
+      invalid.push({ field, message: def.messages.fileType });
       continue;
     }
 
@@ -1988,8 +2294,12 @@ export const POST: APIRoute = async ({ request, params }) => {
     });
   }
 
-  if (invalid.length > 0) return cf7Response(unitTag, 'validation_failed', invalid);
-  if (!text.ok) return cf7Response(unitTag, 'validation_failed', text.invalid);
+  if (invalid.length > 0) {
+    return cf7Response(unitTag, 'validation_failed', msg.validation_failed, invalid);
+  }
+  if (!text.ok) {
+    return cf7Response(unitTag, 'validation_failed', msg.validation_failed, text.invalid);
+  }
 
   // 5. R2 먼저, DB 나중. 반대면 파일 없는 레코드가 생긴다.
   const bucket = (cfEnv as unknown as { FORM_UPLOADS: R2Bucket }).FORM_UPLOADS;
@@ -2001,7 +2311,7 @@ export const POST: APIRoute = async ({ request, params }) => {
     }
   } catch (err) {
     console.error('r2 put failed', err);
-    return cf7Response(unitTag, 'mail_failed');
+    return cf7Response(unitTag, 'mail_failed', msg.mail_failed);
   }
 
   const row: SubmissionRow = {
@@ -2029,7 +2339,7 @@ export const POST: APIRoute = async ({ request, params }) => {
     await insertSubmission(supabase, row);
   } catch (err) {
     console.error('supabase insert failed', err);
-    return cf7Response(unitTag, 'mail_failed');
+    return cf7Response(unitTag, 'mail_failed', msg.mail_failed);
   }
 
   // 6. 이메일. 여기서 실패해도 고객에게는 성공으로 응답한다.
@@ -2066,7 +2376,7 @@ export const POST: APIRoute = async ({ request, params }) => {
     });
   }
 
-  return cf7Response(unitTag, 'mail_sent');
+  return cf7Response(unitTag, 'mail_sent', msg.mail_sent);
 };
 ```
 
@@ -2257,17 +2567,16 @@ git commit -m "feat: 서명 링크 기반 첨부파일 다운로드"
 ---
 
 
-### Task 12: Turnstile 위젯과 swv 스키마 배치
+### Task 12: Turnstile 위젯과 swv 스키마 서빙
 
 **Files:**
 - Modify: `src/raw/analysis-body.html`
 - Modify: `src/raw/consulting-new-car-body.html`
 - Modify: `src/raw/consulting-used-car-body.html`
 - Modify: `src/raw/consulting-detailing-body.html`
-- Create: `public/wp-json/contact-form-7/v1/contact-forms/584/feedback/schema`
-- Create: `public/wp-json/contact-form-7/v1/contact-forms/583/feedback/schema`
-- Create: `public/wp-json/contact-form-7/v1/contact-forms/631/feedback/schema`
 - Create: `public/_headers`
+
+swv 스키마 파일은 **이미 `public/wp-json/contact-form-7/v1/contact-forms/{583,584,631,2470}/feedback/schema` 에 존재한다.** 포팅 당시 원본 사이트에서 받아둔 것이고 Task 2의 에러 문구가 여기서 나왔다. 새로 만들거나 덮어쓰지 않는다. 이 태스크에서 할 일은 확장자 없는 이 파일들이 JSON Content-Type으로 서빙되게 하는 것뿐이다.
 
 `src/pages/**/index.astro` 는 건드리지 않는다. 페이지는 `src/raw/*-body.html`을 그대로 주입하므로 raw 파일만 고치면 된다.
 
@@ -2303,66 +2612,18 @@ Cloudflare 대시보드 → Turnstile → Add site. 도메인 `dlas.co.kr`, 위�
 
 위젯이 `<form>` 내부에 있어야 CF7이 FormData를 만들 때 `cf-turnstile-response`가 자동으로 포함된다. `</form>` 밖에 두면 토큰이 전송되지 않는다.
 
-- [ ] **Step 3: swv 스키마 파일을 만든다**
+- [ ] **Step 3: 스키마 파일이 그대로 있는지 확인한다**
 
-CF7 JS가 페이지 로드 시 GET 하는 경로다. 없으면 콘솔 에러가 난다.
-
-`public/wp-json/contact-form-7/v1/contact-forms/584/feedback/schema`:
-
-```json
-{
-  "version": "6.0.6",
-  "locale": "ko_KR",
-  "rules": [
-    { "rule": "required", "field": "your-name", "error": "입력란을 작성해 주세요." },
-    { "rule": "maxlength", "field": "your-name", "threshold": 400, "error": "입력이 너무 깁니다." },
-    { "rule": "required", "field": "your-phone", "error": "입력란을 작성해 주세요." },
-    { "rule": "minlength", "field": "your-phone", "threshold": 13, "error": "입력이 너무 짧습니다." },
-    { "rule": "maxlength", "field": "your-phone", "threshold": 400, "error": "입력이 너무 깁니다." },
-    { "rule": "maxlength", "field": "your-message", "threshold": 2000, "error": "입력이 너무 깁니다." },
-    { "rule": "required", "field": "file-71", "error": "입력란을 작성해 주세요." },
-    { "rule": "enum", "field": "file-71", "accept": [".jpg", ".jpeg", ".png", ".pdf"], "error": "허용되지 않는 파일 형식입니다." },
-    { "rule": "enum", "field": "file-72", "accept": [".jpg", ".jpeg", ".png", ".pdf"], "error": "허용되지 않는 파일 형식입니다." }
-  ]
-}
+```bash
+git status --porcelain public/wp-json
+python3 -c "
+import json,glob
+for f in sorted(glob.glob('public/wp-json/contact-form-7/v1/contact-forms/*/feedback/schema')):
+    json.load(open(f)); print('OK', f)
+"
 ```
 
-`public/wp-json/contact-form-7/v1/contact-forms/583/feedback/schema`:
-
-```json
-{
-  "version": "6.0.6",
-  "locale": "ko_KR",
-  "rules": [
-    { "rule": "required", "field": "your-name", "error": "입력란을 작성해 주세요." },
-    { "rule": "maxlength", "field": "your-name", "threshold": 400, "error": "입력이 너무 깁니다." },
-    { "rule": "required", "field": "your-phone", "error": "입력란을 작성해 주세요." },
-    { "rule": "minlength", "field": "your-phone", "threshold": 13, "error": "입력이 너무 짧습니다." },
-    { "rule": "maxlength", "field": "your-phone", "threshold": 400, "error": "입력이 너무 깁니다." },
-    { "rule": "required", "field": "your-car", "error": "입력란을 작성해 주세요." },
-    { "rule": "maxlength", "field": "your-car", "threshold": 400, "error": "입력이 너무 깁니다." },
-    { "rule": "maxlength", "field": "your-message", "threshold": 2000, "error": "입력이 너무 깁니다." }
-  ]
-}
-```
-
-`public/wp-json/contact-form-7/v1/contact-forms/631/feedback/schema`:
-
-```json
-{
-  "version": "6.0.6",
-  "locale": "ko_KR",
-  "rules": [
-    { "rule": "required", "field": "your-name", "error": "입력란을 작성해 주세요." },
-    { "rule": "maxlength", "field": "your-name", "threshold": 400, "error": "입력이 너무 깁니다." },
-    { "rule": "required", "field": "your-telephone", "error": "입력란을 작성해 주세요." },
-    { "rule": "maxlength", "field": "your-telephone", "threshold": 400, "error": "입력이 너무 깁니다." },
-    { "rule": "required", "field": "your-car", "error": "입력란을 작성해 주세요." },
-    { "rule": "maxlength", "field": "your-car", "threshold": 400, "error": "입력이 너무 깁니다." },
-    { "rule": "maxlength", "field": "your-message", "threshold": 2000, "error": "입력이 너무 깁니다." }
-  ]
-}
-```
+Expected: `git status`가 아무것도 출력하지 않고(= 수정되지 않음), 4개 파일 모두 `OK`. 이 파일들을 편집하면 클라이언트 검증이 원본과 달라진다.
 
 - [ ] **Step 4: 확장자 없는 파일이 JSON으로 서빙되도록 헤더를 지정한다**
 
@@ -2395,8 +2656,8 @@ Expected: 각 2 (위젯 div 1 + 스크립트 URL 1)
 - [ ] **Step 6: 커밋**
 
 ```bash
-git add src/raw public/wp-json public/_headers
-git commit -m "feat: 컨택폼에 Turnstile 위젯과 swv 스키마 추가"
+git add src/raw public/_headers
+git commit -m "feat: 컨택폼에 Turnstile 위젯 추가, swv 스키마 Content-Type 지정"
 ```
 
 ---
@@ -2536,7 +2797,7 @@ curl -s -X POST \
   -F 'your-name=' -F 'your-phone=' -F 'your-car='
 ```
 
-Expected: `"status":"validation_failed"` 이고 `invalid_fields`에 세 필드가 모두 들어 있다.
+Expected: `"status":"validation_failed"` 이고 `invalid_fields`에 다섯 개(`your-name`, `your-phone`, `your-car`, `your-method`, `your-pay`)가 들어 있다. 체크박스 두 개는 `[]` 없이 나와야 한다. 메시지는 모두 `정확하게 입력 부탁드립니다.`
 
 첨부 테스트 (584):
 
@@ -2564,7 +2825,7 @@ curl -s -X POST \
   -F 'file-71=@/tmp/fake.png'
 ```
 
-Expected: `"status":"validation_failed"` 이고 메시지가 "허용되지 않는 파일 형식입니다..."
+Expected: `"status":"validation_failed"` 이고 메시지가 `이 유형의 파일을 업로드하도록 허용하지 않습니다.`
 
 - [ ] **Step 6: WAF rate limit 규칙을 만든다**
 
@@ -2620,6 +2881,6 @@ Expected: 모든 vitest 통과, 빌드 성공.
 
 - 자체 CRM 연동 (`crm_synced_at`, `crm_record_id` 활용)
 - 개인정보 수집·이용 동의 체크박스 신설 — 원본 폼에 없다
-- `file-71`의 라벨("선택")과 실제 검증(필수) 불일치 — 발주처 확인 후 한쪽으로 맞춘다
+- `file-71`의 라벨 "(선택, 최대 2개)" 문구 수정 — SWV 스키마상 첨부는 필수이므로 라벨이 오류다
 - `dl_ref` / `it_ref` / `referer-page`를 실제로 채우는 유입 추적 스크립트
 - 만료된 파일 링크 셀프서비스 재발급
