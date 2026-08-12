@@ -34,6 +34,28 @@ describe('verifyTurnstile', () => {
     expect(await verifyTurnstile('secret', 'token', null, fake)).toBe(false);
   });
 
+  it('응답이 200이 아니면 body에 success:true가 있어도 실패다', async () => {
+    const fake: typeof fetch = async () =>
+      new Response('{"success":true}', { status: 500 });
+    expect(await verifyTurnstile('secret', 'token', null, fake)).toBe(false);
+  });
+
+  it('JSON이 아닌 응답이면 실패로 본다', async () => {
+    const fake: typeof fetch = async () =>
+      new Response('<html>gateway error</html>', { status: 200 });
+    expect(await verifyTurnstile('secret', 'token', null, fake)).toBe(false);
+  });
+
+  it.each([
+    ['{}', '{}'],
+    ['success:null', '{"success":null}'],
+    ['success:"true"(문자열)', '{"success":"true"}'],
+    ['success:1(숫자)', '{"success":1}'],
+  ])('success가 boolean true가 아니면 실패다 (%s)', async (_label, responseBody) => {
+    const fake: typeof fetch = async () => new Response(responseBody, { status: 200 });
+    expect(await verifyTurnstile('secret', 'token', null, fake)).toBe(false);
+  });
+
   it('IP가 있으면 remoteip로 함께 보낸다', async () => {
     let body: URLSearchParams | null = null;
     const fake: typeof fetch = async (_url, init) => {
@@ -44,5 +66,17 @@ describe('verifyTurnstile', () => {
     expect(body!.get('secret')).toBe('secret');
     expect(body!.get('response')).toBe('token');
     expect(body!.get('remoteip')).toBe('9.9.9.9');
+  });
+
+  it('IP가 없으면 remoteip는 body에 포함되지 않는다', async () => {
+    let body: URLSearchParams | null = null;
+    const fake: typeof fetch = async (_url, init) => {
+      body = (init as RequestInit).body as URLSearchParams;
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    };
+    await verifyTurnstile('secret', 'token', null, fake);
+    expect(body!.get('secret')).toBe('secret');
+    expect(body!.get('response')).toBe('token');
+    expect(body!.get('remoteip')).toBe(null);
   });
 });
