@@ -6,3 +6,6 @@ reference/
 port-failures.txt
 .playwright-mcp/
 *.local.png
+.dev.vars
+.wrangler/
+.superpowers/
