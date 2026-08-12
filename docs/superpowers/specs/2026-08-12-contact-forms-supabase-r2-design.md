@@ -41,10 +41,7 @@
 
 `/lease-rate-calculator`(CF7 2470)는 제출 없는 계산기이므로 범위에서 제외한다.
 
-필드 차이:
-- `analysis`: `your-name`, `your-phone`, `your-message`, `file-71`, `file-72`
-- `consulting-new-car` / `consulting-used-car`: `your-name`, `your-phone`, `your-car`, `your-method[]`(리스/장기렌트/할부/현금), `your-pay[]`(구매시기 4종), `your-message`
-- `consulting-detailing`: `your-name`, **`your-telephone`**(주의: 이 폼만 이름이 다름), `your-car`, `your-method[]`(시공항목 6종), `your-pay[]`(예약시기 4종), `your-message`
+정확한 페이로드는 §11 부록에 전부 적어두었다. 구현 시 그 표를 단일 기준으로 삼는다.
 
 공통 히든: `your-subject`, `dl_ref`(detailing은 `it_ref`), `referer-page`.
 
@@ -207,7 +204,7 @@ alter table public.contact_submissions enable row level security;
 |---|---|
 | `your-name` | `name` |
 | `your-phone` / `your-telephone` | `phone` (정규화: 숫자만 남기고 `010-1234-5678` 형태로) |
-| `your-car` | `car` |
+| `your-car` | `car` (consulting 3종에서 필수) |
 | `your-method[]` | `methods` |
 | `your-pay[]` | `pay_period` |
 | `your-message` | `message` |
@@ -272,3 +269,112 @@ R2 라이프사이클: `submissions/` 프리픽스에 3년 후 자동 삭제 규
 - 만료된 파일 링크의 셀프서비스 재발급 UI
 - 기존 WordPress에 쌓인 과거 제출 데이터의 이관
 - 개인정보 수집·이용 동의 체크박스 신설 (§2 참고. 원본에 없는 요소라 별도 과제)
+
+---
+
+## 11. 부록 — 폼별 정확한 페이로드
+
+`src/raw/*-body.html` 미러 마크업에서 직접 추출한 값이다. 구현 시 이 부록이 단일 기준이다.
+
+### 11.1 CF7가 항상 함께 보내는 필드
+
+모든 폼이 아래 12개를 그대로 POST한다. 우리 엔드포인트는 `_wpcf7`(폼 ID 확인)과 `_wpcf7_unit_tag`(응답 `into` 값)만 사용하고, 나머지는 **읽되 저장하지 않는다.**
+
+| 필드 | analysis | new-car | used-car | detailing |
+|---|---|---|---|---|
+| `_wpcf7` | `584` | `583` | `583` | `631` |
+| `_wpcf7_unit_tag` | `wpcf7-f584-p609-o1` | `wpcf7-f583-p580-o1` | `wpcf7-f583-p592-o1` | `wpcf7-f631-p626-o1` |
+| `_wpcf7_container_post` | `609` | `580` | `592` | `626` |
+| `_wpcf7_version` | `6.0.6` | 동일 | 동일 | 동일 |
+| `_wpcf7_locale` | `ko_KR` | 동일 | 동일 | 동일 |
+| `_wpcf7_posted_data_hash` | `''` | 동일 | 동일 | 동일 |
+| `_wpcf7cf_hidden_group_fields` / `_hidden_groups` / `_visible_groups` / `_repeaters` | `[]` | 동일 | 동일 | 동일 |
+| `_wpcf7cf_steps` | `{}` | 동일 | 동일 | 동일 |
+| `_wpcf7cf_options` | JSON 문자열 | JSON 문자열 | JSON 문자열 | JSON 문자열 |
+
+`_wpcf7`와 `_wpcf7_unit_tag`가 폼을 구분하는 유일한 신뢰 가능한 값이다. **`_wpcf7`만으로는 부족하다** — `583`이 신차·중고차 두 페이지에 쓰이므로, `form_key` 판정은 `(_wpcf7, _wpcf7_container_post)` 쌍으로 한다:
+
+| `_wpcf7` | `_wpcf7_container_post` | `form_key` |
+|---|---|---|
+| 584 | 609 | `analysis` |
+| 583 | 580 | `consulting-new-car` |
+| 583 | 592 | `consulting-used-car` |
+| 631 | 626 | `consulting-detailing` |
+
+알 수 없는 조합이 오면 저장하지 않고 `spam` 상태로 응답한다.
+
+### 11.2 사용자 입력 필드
+
+| form_key | 필드 | 타입 | 필수 | 제약 |
+|---|---|---|---|---|
+| analysis | `your-name` | text | ✅ | maxlength 400 |
+| analysis | `your-phone` | tel | ✅ | maxlength 400, **minlength 13** |
+| analysis | `your-message` | textarea | — | maxlength 2000 |
+| analysis | `file-71` | file | ✅ (아래 주의) | `.jpg,.jpeg,.png,.pdf` |
+| analysis | `file-72` | file | — | `.jpg,.jpeg,.png,.pdf` |
+| new-car / used-car | `your-name` | text | ✅ | maxlength 400 |
+| new-car / used-car | `your-phone` | tel | ✅ | maxlength 400, **minlength 13** |
+| new-car / used-car | `your-car` | text | ✅ | maxlength 400 |
+| new-car / used-car | `your-method[]` | checkbox | — | 아래 값 목록 |
+| new-car / used-car | `your-pay[]` | checkbox | — | 아래 값 목록 |
+| new-car / used-car | `your-message` | textarea | — | maxlength 2000 |
+| detailing | `your-name` | text | ✅ | maxlength 400 |
+| detailing | **`your-telephone`** | tel | ✅ | maxlength 400, minlength 없음, 초기값 `010-` |
+| detailing | `your-car` | text | ✅ | maxlength 400 |
+| detailing | `your-method[]` | checkbox | — | 아래 값 목록 |
+| detailing | `your-pay[]` | checkbox | — | 아래 값 목록 |
+| detailing | `your-message` | textarea | — | maxlength 2000 |
+
+**`file-71` 주의**: 라벨 문구는 "(선택, 최대 2개)"라고 되어 있으나 input에는 `wpcf7-validates-as-required`와 `aria-required="true"`가 붙어 있다. 즉 실제로는 **필수**로 동작한다. 원본 동작을 그대로 옮기므로 필수로 검증하되, 라벨과 어긋난다는 점을 발주처에 알리고 어느 쪽으로 맞출지 확인한다.
+
+**`your-phone` minlength 13**: `010-1234-5678` 형태(하이픈 포함 13자)를 전제한다. 화면에서는 `cleave.min.js`가 `.your_phone` 클래스에 붙어 입력 중 자동으로 하이픈을 넣는다 (`analysis`, `new-car`, `used-car`만 해당). `detailing`의 `your-telephone`은 이 클래스가 없어 자동 서식이 없고 minlength도 없다 — 사용자가 아무 형태로나 넣을 수 있다. 서버에서는 **양쪽 다 숫자만 추출해 저장한다**: 10~11자리면 `010-1234-5678` 형태로 정규화하고, 그 외 길이면 입력 원문을 그대로 저장한다 (해외 번호 등을 잃지 않기 위함).
+
+### 11.3 체크박스 값 (원문 그대로)
+
+`your-method[]`
+- new-car / used-car: `리스`, `장기렌트`, `할부`, `현금`
+- detailing: `신차패키지`, `디테일링`, `유리막/광택`, `PPF/랩핑`, `가죽코팅`, `기타`
+
+`your-pay[]`
+- new-car / used-car: `좋은 조건 즉시`, `이번달 구매 예정`, `다음달 계획 중`, `3개월 이상 예정`
+- detailing: `예약가능즉시`, `1주일 이내`, `1개월 이내`, `미정`
+
+체크박스는 다중 선택이며 아무것도 안 고르면 필드 자체가 전송되지 않는다. 값이 위 목록에 없으면 저장하지 않고 무시한다 (조작 방지). 값은 번역·매핑 없이 **원문 문자열 그대로** `methods` / `pay_period` 배열에 넣는다 — 기존 zmes 전송도 그랬고, 담당자가 읽는 값이 바뀌면 안 된다.
+
+### 11.4 히든 마케팅 필드
+
+| 필드 | 폼 | 미러의 초기값 |
+|---|---|---|
+| `your-subject` | 전부 | `견적서 비교분석` / `신차 상담신청`(new·used 공통) / `차량시공 문의` |
+| `dl_ref` | analysis, new-car, used-car | `''` |
+| `it_ref` | detailing | `''` |
+| `referer-page` | 전부 | `''` |
+
+`dl_ref` / `it_ref` / `referer-page`는 미러 자산 어디에서도 채워지지 않아 **항상 빈 문자열로 전송된다.** 원본 사이트에서는 외부 태그(GTM 등)가 채웠을 가능성이 있으나 미러에는 그 코드가 없다. 이번 작업은 오는 값을 그대로 받아 `ref` / `referer_page`에 저장하기만 한다. 유입 경로 추적이 실제로 필요하면 별도 과제로 스크립트를 붙인다.
+
+`your-subject`는 클라이언트가 보내는 값이라 신뢰하지 않는다. 저장할 `form_subject`는 §11.1의 `form_key` 판정 결과로 서버에서 결정하고, 전송된 `your-subject`는 무시한다.
+
+### 11.5 우리가 추가하는 필드
+
+| 필드 | 출처 | 용도 |
+|---|---|---|
+| `cf-turnstile-response` | Turnstile 위젯 (폼 내부) | 스팸 검증. 저장하지 않음 |
+
+`source_page`는 폼 필드가 아니라 요청의 `Referer` 헤더에서 서버가 채운다.
+
+### 11.6 기존 zmes 페이로드와의 대응
+
+자체 CRM으로 넘길 때 참고할 매핑. 이번 구현 범위는 아니다.
+
+| zmes 키 | 우리 컬럼 |
+|---|---|
+| `csName` | `name` |
+| `csTel` | `phone` |
+| `apiKey` | 없음 (폼 구분은 `form_key`) |
+| `etc.브랜드/차종/모델` | `car` |
+| `etc.구매방식` | `methods` (zmes는 `, `로 join한 문자열) |
+| `etc.구매시기` | `pay_period` (동일하게 join) |
+| `etc.문의사항` | `message` |
+| `etc.마케팅경로` | `ref` |
+| `etc.이전페이지` | `referer_page` |
+| `file1` / `file2` | `attachments[0]` / `attachments[1]` (공개 URL 대신 서명 링크) |
