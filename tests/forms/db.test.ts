@@ -62,6 +62,13 @@ describe('insertSubmission', () => {
     await insertSubmission({ ...CFG, url: 'https://proj.supabase.co/' }, row(), fake);
     expect(seen).toBe('https://proj.supabase.co/rest/v1/contact_submissions');
   });
+
+  it('fetch 자체가 reject하면 그대로 던진다', async () => {
+    const fake: typeof fetch = async () => {
+      throw new Error('network down');
+    };
+    await expect(insertSubmission(CFG, row(), fake)).rejects.toThrow('network down');
+  });
 });
 
 describe('updateEmailStatus', () => {
@@ -69,7 +76,7 @@ describe('updateEmailStatus', () => {
     let seen: { url: string; init: RequestInit } | null = null;
     const fake: typeof fetch = async (url, init) => {
       seen = { url: String(url), init: init as RequestInit };
-      return new Response('', { status: 204 });
+      return new Response(null, { status: 204 });
     };
 
     await updateEmailStatus(CFG, 'sub-1', { email_sent_at: '2026-08-12T00:00:00Z', email_error: null }, fake);
@@ -84,6 +91,15 @@ describe('updateEmailStatus', () => {
 
   it('실패해도 던지지 않는다', async () => {
     const fake: typeof fetch = async () => new Response('nope', { status: 500 });
+    await expect(
+      updateEmailStatus(CFG, 'sub-1', { email_sent_at: null, email_error: 'x' }, fake),
+    ).resolves.toBeUndefined();
+  });
+
+  it('fetch가 reject해도 던지지 않는다', async () => {
+    const fake: typeof fetch = async () => {
+      throw new Error('network down');
+    };
     await expect(
       updateEmailStatus(CFG, 'sub-1', { email_sent_at: null, email_error: 'x' }, fake),
     ).resolves.toBeUndefined();
