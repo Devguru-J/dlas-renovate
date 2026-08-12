@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { env as cfEnv } from 'cloudflare:workers';
-import { findForm } from '../../../../../../lib/forms/definitions';
+import { findForm, type StatusMessages } from '../../../../../../lib/forms/definitions';
 import { validateText } from '../../../../../../lib/forms/validate';
 import {
   MAX_FILE_BYTES, MAX_FILES, detectFileType, sanitizeFilename, r2Key,
@@ -18,6 +18,27 @@ import { readEnv } from '../../../../../../lib/forms/env';
 export const prerender = false;
 
 export const POST: APIRoute = async ({ request, params }) => {
+  // 폼이 아직 식별되지 않았을 때 예외가 나면 이 기본값으로 응답한다.
+  let unitTag = 'unknown';
+  let msg: StatusMessages = FALLBACK_MESSAGES;
+
+  try {
+    return await handleFeedback({ request, params }, (tag, m) => {
+      unitTag = tag;
+      msg = m;
+    });
+  } catch (err) {
+    // 여기까지 새어나온 예외는 설정 누락 등 예측하지 못한 실패다.
+    // 4xx/5xx를 내면 CF7 클라이언트가 아무 메시지도 보여주지 않으므로 200으로 응답한다.
+    console.error('unhandled error in feedback endpoint', err);
+    return cf7Response(unitTag, 'mail_failed', msg.mail_failed);
+  }
+};
+
+async function handleFeedback(
+  { request, params }: { request: Request; params: Partial<Record<string, string>> },
+  onFormIdentified: (unitTag: string, msg: StatusMessages) => void,
+): Promise<Response> {
   const env = readEnv(cfEnv as unknown as Record<string, unknown>);
 
   let form: FormData;
@@ -43,6 +64,8 @@ export const POST: APIRoute = async ({ request, params }) => {
   }
   const unitTag = def.unitTag;
   const msg = def.statusMessages;
+  // 폼이 식별된 뒤부터는 바깥 catch도 이 폼의 문구를 쓸 수 있게 알려준다.
+  onFormIdentified(unitTag, msg);
 
   const ip = request.headers.get('cf-connecting-ip');
 
@@ -146,22 +169,25 @@ export const POST: APIRoute = async ({ request, params }) => {
     return cf7Response(unitTag, 'mail_failed', msg.mail_failed);
   }
 
-  // 6. 이메일. 여기서 실패해도 고객에게는 성공으로 응답한다.
-  const exp = Date.now() + FILE_TOKEN_TTL_MS;
-  const links = await Promise.all(
-    pending.map(async (p) => ({
-      filename: p.meta.filename,
-      url: `${env.siteOrigin}/api/file/${submissionId}/${p.n}?t=${await signFileToken(
-        env.fileTokenSecret,
-        submissionId,
-        p.n,
-        exp,
-      )}`,
-    })),
-  );
-
-  const { subject, html } = buildEmail(row, links);
+  // 6. 이메일. insertSubmission이 성공한 뒤부터는 이 블록 안에서 무엇이 실패해도
+  // 응답은 반드시 mail_sent로 유지한다 — 이미 저장된 리드를 실패로 보고하면
+  // 고객이 중복 제출하거나 포기하게 된다. 서명 링크 생성·이메일 본문 구성도
+  // sendEmail과 같은 try 안에 둔다.
   try {
+    const exp = Date.now() + FILE_TOKEN_TTL_MS;
+    const links = await Promise.all(
+      pending.map(async (p) => ({
+        filename: p.meta.filename,
+        url: `${env.siteOrigin}/api/file/${submissionId}/${p.n}?t=${await signFileToken(
+          env.fileTokenSecret,
+          submissionId,
+          p.n,
+          exp,
+        )}`,
+      })),
+    );
+
+    const { subject, html } = buildEmail(row, links);
     await sendEmail(
       { apiKey: env.resendApiKey, from: env.notifyFrom, to: env.notifyTo },
       subject,
@@ -181,4 +207,4 @@ export const POST: APIRoute = async ({ request, params }) => {
   }
 
   return cf7Response(unitTag, 'mail_sent', msg.mail_sent);
-};
+}
