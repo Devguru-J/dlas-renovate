@@ -2,7 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "dlas",
   "main": "@astrojs/cloudflare/entrypoints/server",
-  "compatibility_date": "2026-08-12",
+  // 설치된 workerd 바이너리가 지원하는 최신 날짜. 이보다 미래로 두면 빌드가 실패한다.
+  "compatibility_date": "2026-08-11",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./dist",
