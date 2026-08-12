@@ -1,0 +1,8 @@
+SUPABASE_URL=https://xxxxxxxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=
+TURNSTILE_SECRET=
+RESEND_API_KEY=
+NOTIFY_TO=someone@dlas.co.kr
+NOTIFY_FROM=noreply@dlas.co.kr
+FILE_TOKEN_SECRET=
+PUBLIC_SITE_ORIGIN=https://dlas.co.kr

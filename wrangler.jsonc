@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dlas",
+  "main": "@astrojs/cloudflare/entrypoints/server",
+  "compatibility_date": "2026-08-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
+  "r2_buckets": [
+    {
+      "binding": "FORM_UPLOADS",
+      "bucket_name": "dlas-form-uploads",
+      "preview_bucket_name": "dlas-form-uploads-preview"
+    }
+  ]
+}
