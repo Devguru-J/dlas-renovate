@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { insertSubmission, updateEmailStatus, type SubmissionRow } from '../../src/lib/forms/db';
+import {
+  insertSubmission,
+  updateEmailStatus,
+  fetchAttachments,
+  type SubmissionRow,
+} from '../../src/lib/forms/db';
 
 const CFG = { url: 'https://proj.supabase.co', serviceRoleKey: 'service-key' };
 
@@ -103,5 +108,38 @@ describe('updateEmailStatus', () => {
     await expect(
       updateEmailStatus(CFG, 'sub-1', { email_sent_at: null, email_error: 'x' }, fake),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('fetchAttachments', () => {
+  it('id로 좁혀 attachments만 조회한다', async () => {
+    let seen = '';
+    const fake: typeof fetch = async (url) => {
+      seen = String(url);
+      return new Response(
+        JSON.stringify([
+          {
+            attachments: [
+              { n: 1, filename: 'a.pdf', size: 1, content_type: 'application/pdf', r2_key: 'k' },
+            ],
+          },
+        ]),
+        { status: 200 },
+      );
+    };
+    const out = await fetchAttachments(CFG, 'sub-1', fake);
+    expect(seen).toContain('id=eq.sub-1');
+    expect(seen).toContain('select=attachments');
+    expect(out[0].r2_key).toBe('k');
+  });
+
+  it('레코드가 없으면 빈 배열이다', async () => {
+    const fake: typeof fetch = async () => new Response('[]', { status: 200 });
+    expect(await fetchAttachments(CFG, 'none', fake)).toEqual([]);
+  });
+
+  it('실패 응답이면 에러를 던진다', async () => {
+    const fake: typeof fetch = async () => new Response('boom', { status: 500 });
+    await expect(fetchAttachments(CFG, 'sub-1', fake)).rejects.toThrow(/500.*boom/);
   });
 });

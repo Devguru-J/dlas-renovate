@@ -80,3 +80,26 @@ export async function updateEmailStatus(
     console.error('email status update failed', err);
   }
 }
+
+export async function fetchAttachments(
+  cfg: SupabaseConfig,
+  id: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AttachmentMeta[]> {
+  const base = cfg.url.replace(/\/+$/, '');
+  const res = await fetchImpl(
+    `${base}/rest/v1/contact_submissions?id=eq.${encodeURIComponent(id)}&select=attachments`,
+    {
+      headers: {
+        apikey: cfg.serviceRoleKey,
+        Authorization: `Bearer ${cfg.serviceRoleKey}`,
+        Accept: 'application/json',
+      },
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`supabase select failed: ${res.status} ${await res.text()}`);
+  }
+  const rows = (await res.json()) as { attachments: AttachmentMeta[] }[];
+  return rows[0]?.attachments ?? [];
+}
