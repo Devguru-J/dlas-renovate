@@ -7,3 +7,9 @@
 # 되돌리려면 이 줄과 astro.config.mjs의 사이트맵 filter 예외를 함께 제거하면 된다.
 /consulting-used-car/  /consulting-new-car/  301
 /consulting-used-car   /consulting-new-car/  301
+
+# 차량시공 문의는 시공 사업 미운영 결정으로 폐기했다(2026-08-13).
+# 전역 메뉴 항목과 시공 페이지의 상담 버튼도 함께 제거했으므로 사이트 내부 유입은 없다.
+# 검색·북마크로 들어오는 방문자를 위해 홈으로 보낸다.
+/consulting-detailing/  /  301
+/consulting-detailing   /  301
