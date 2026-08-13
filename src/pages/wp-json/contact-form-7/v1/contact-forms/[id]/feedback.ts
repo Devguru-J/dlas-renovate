@@ -11,7 +11,7 @@ import { cf7Response, FALLBACK_MESSAGES } from '../../../../../../lib/forms/cf7'
 import {
   insertSubmission, updateEmailStatus, type SubmissionRow,
 } from '../../../../../../lib/forms/db';
-import { buildEmail, sendEmail } from '../../../../../../lib/forms/notify';
+import { buildEmail, sendEmail, escapeHtml } from '../../../../../../lib/forms/notify';
 import { verifyTurnstile } from '../../../../../../lib/forms/turnstile';
 import { readEnv } from '../../../../../../lib/forms/env';
 
@@ -173,6 +173,34 @@ async function handleFeedback(
     await insertSubmission(supabase, row);
   } catch (err) {
     console.error('supabase insert failed', err);
+    // 저장에는 실패했지만 고객의 문의 자체는 잃지 않도록 담당자에게라도 알린다.
+    // 알림이 또 실패해도 응답은 바뀌지 않는다 — 이 블록은 밖으로 예외를 내보내지 않는다.
+    try {
+      // 서명 링크는 레코드가 있어야 동작한다(다운로드 엔드포인트가 attachments를
+      // Supabase에서 조회한다). 저장이 실패한 지금은 링크가 404가 되므로 아예 넣지 않고,
+      // 대신 R2 키를 평문으로 적어 담당자가 대시보드에서 직접 받을 수 있게 한다.
+      const base = buildEmail(row, []);
+      const fileNote =
+        pending.length > 0
+          ? `<p style="margin:0 0 8px">첨부파일은 R2에 업로드되어 있으나 다운로드 링크는 발급되지 않았습니다. R2 대시보드에서 아래 키로 내려받아 주세요.</p><ul style="margin:0 0 8px;padding-left:18px">${pending
+              .map(
+                (p) =>
+                  `<li>${escapeHtml(p.meta.filename)} — <code>${escapeHtml(p.meta.r2_key)}</code></li>`,
+              )
+              .join('')}</ul>`
+          : '';
+      const notice = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Malgun Gothic',sans-serif;font-size:14px;color:#222;border:2px solid #c00;padding:12px;margin-bottom:16px">
+<h2 style="font-size:16px;margin:0 0 8px;color:#c00">[DB저장실패] 이 제출은 데이터베이스에 저장되지 않았습니다.</h2>
+<p style="margin:0 0 8px">아래 내용을 수동으로 기록하고 고객에게 연락해 주세요. 고객 화면에는 실패 안내가 표시되어 재제출할 수 있습니다.</p>
+${fileNote}</div>`;
+      await sendEmail(
+        { apiKey: env.resendApiKey, from: env.notifyFrom, to: env.notifyTo },
+        `[DB저장실패] ${base.subject}`,
+        notice + base.html,
+      );
+    } catch (mailErr) {
+      console.error('db failure notification email failed', mailErr);
+    }
     return cf7Response(unitTag, 'mail_failed', msg.mail_failed);
   }
 

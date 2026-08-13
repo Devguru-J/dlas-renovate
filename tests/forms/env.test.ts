@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readEnv } from '../../src/lib/forms/env';
+import { readEnv, readFileEnv } from '../../src/lib/forms/env';
 
 const full = {
   SUPABASE_URL: 'https://p.supabase.co',
@@ -92,5 +92,58 @@ describe('readEnv', () => {
       const env = readEnv({ ...full, TURNSTILE_ENABLED: 'false' });
       expect(env.turnstileSecret).toBeNull();
     });
+  });
+});
+
+describe('readFileEnv', () => {
+  const fileOnly = {
+    SUPABASE_URL: 'https://p.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'k',
+    FILE_TOKEN_SECRET: 's',
+  };
+
+  it('세 개의 변수만 읽어 반환한다', () => {
+    expect(readFileEnv(fileOnly)).toEqual({
+      supabaseUrl: 'https://p.supabase.co',
+      supabaseServiceRoleKey: 'k',
+      fileTokenSecret: 's',
+    });
+  });
+
+  it('메일·Turnstile 설정이 하나도 없어도 성공한다', () => {
+    expect(() => readFileEnv(fileOnly)).not.toThrow();
+  });
+
+  it('메일 설정이 비어 있거나 TURNSTILE_ENABLED가 잘못돼도 영향을 받지 않는다', () => {
+    const env = readFileEnv({
+      ...fileOnly,
+      RESEND_API_KEY: '',
+      NOTIFY_TO: '',
+      NOTIFY_FROM: '',
+      TURNSTILE_ENABLED: 'yes',
+    });
+    expect(env.fileTokenSecret).toBe('s');
+  });
+
+  it('SUPABASE_URL이 없으면 이름과 함께 예외를 던진다', () => {
+    const { SUPABASE_URL, ...rest } = fileOnly;
+    expect(() => readFileEnv(rest)).toThrow(/SUPABASE_URL/);
+  });
+
+  it('SUPABASE_SERVICE_ROLE_KEY가 없으면 이름과 함께 예외를 던진다', () => {
+    const { SUPABASE_SERVICE_ROLE_KEY, ...rest } = fileOnly;
+    expect(() => readFileEnv(rest)).toThrow(/SUPABASE_SERVICE_ROLE_KEY/);
+  });
+
+  it('FILE_TOKEN_SECRET이 없으면 이름과 함께 예외를 던진다', () => {
+    const { FILE_TOKEN_SECRET, ...rest } = fileOnly;
+    expect(() => readFileEnv(rest)).toThrow(/FILE_TOKEN_SECRET/);
+  });
+
+  it('빈 문자열도 누락으로 본다', () => {
+    expect(() => readFileEnv({ ...fileOnly, SUPABASE_URL: '' })).toThrow(/SUPABASE_URL/);
+    expect(() => readFileEnv({ ...fileOnly, SUPABASE_SERVICE_ROLE_KEY: '   ' }))
+      .toThrow(/SUPABASE_SERVICE_ROLE_KEY/);
+    expect(() => readFileEnv({ ...fileOnly, FILE_TOKEN_SECRET: '' })).toThrow(/FILE_TOKEN_SECRET/);
   });
 });

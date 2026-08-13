@@ -13,6 +13,16 @@ export interface FormsEnv {
   siteOrigin: string;
 }
 
+/**
+ * 첨부파일 다운로드 엔드포인트가 실제로 쓰는 변수만 담는다.
+ * 메일(RESEND/NOTIFY)이나 Turnstile 설정이 틀렸다고 해서 다운로드까지 죽으면 안 된다.
+ */
+export interface FileEnv {
+  supabaseUrl: string;
+  supabaseServiceRoleKey: string;
+  fileTokenSecret: string;
+}
+
 function required(source: Record<string, unknown>, name: string): string {
   const v = source[name];
   if (typeof v !== 'string' || v.trim() === '') {
@@ -33,6 +43,14 @@ function readTurnstileEnabled(source: Record<string, unknown>): boolean {
   throw new Error(
     `환경변수 TURNSTILE_ENABLED 값이 올바르지 않습니다. "true" 또는 "false"만 허용됩니다 (받은 값: ${raw}).`,
   );
+}
+
+export function readFileEnv(source: Record<string, unknown>): FileEnv {
+  return {
+    supabaseUrl: required(source, 'SUPABASE_URL'),
+    supabaseServiceRoleKey: required(source, 'SUPABASE_SERVICE_ROLE_KEY'),
+    fileTokenSecret: required(source, 'FILE_TOKEN_SECRET'),
+  };
 }
 
 export function readEnv(source: Record<string, unknown>): FormsEnv {
