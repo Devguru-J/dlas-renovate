@@ -1,3 +1,9 @@
 # 원본(Yoast)이 서빙하던 sitemap_index.xml 주소를 이어준다.
 # @astrojs/sitemap은 파일명을 `${filenameBase}-index.xml`로 고정해 언더스코어 형태를 만들 수 없다.
 /sitemap_index.xml  /sitemap-index.xml  301
+
+# 중고차 맞춤 컨설팅은 신차 페이지와 본문이 95% 동일하고 사이트 메뉴 어디에서도
+# 링크되지 않는 사실상 중복 페이지였다. 중복 콘텐츠 불이익을 피하려 신차로 통합한다.
+# 되돌리려면 이 줄과 astro.config.mjs의 사이트맵 filter 예외를 함께 제거하면 된다.
+/consulting-used-car/  /consulting-new-car/  301
+/consulting-used-car   /consulting-new-car/  301

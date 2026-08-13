@@ -13,7 +13,8 @@ export default defineConfig({
   integrations: [
     sitemap({
       // 404 페이지는 색인 대상이 아니므로 제외한다.
-      filter: (page) => !/\/404\/?$/.test(page),
+      // 중고차 맞춤 컨설팅은 신차 페이지로 301 통합했으므로(public/_redirects) 함께 뺀다.
+      filter: (page) => !/\/(404|consulting-used-car)\/?$/.test(page),
 
       // 원본 사이트(Yoast)가 제공하던 lastmod와 페이지별 이미지를 되살린다.
       // lastmod는 검색엔진의 재크롤링 우선순위 판단에, 이미지는 이미지 검색 노출에 쓰인다.
