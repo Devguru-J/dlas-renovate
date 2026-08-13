@@ -1,0 +1,4 @@
+# 원본 사이트(Yoast)는 sitemap_index.xml을 서빙했다. @astrojs/sitemap은 파일명을
+# `${filenameBase}-index.xml` 로 고정하므로 언더스코어 형태를 만들 수 없다.
+# 기존 주소가 Search Console에 제출돼 있을 수 있어 301로 이어준다.
+/sitemap_index.xml  /sitemap-index.xml  301
