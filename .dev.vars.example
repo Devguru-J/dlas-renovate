@@ -1,0 +1,12 @@
+SUPABASE_URL=https://xxxxxxxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=
+# Turnstile 봇 방어. 기본값(설정 안 함) = 활성화(ENABLED).
+# 폼에 Turnstile 위젯이 아직 없을 때만 false로 설정할 것 —
+# 위젯이 없는데 활성화 상태이면 모든 정상 제출이 spam으로 거부된다.
+# TURNSTILE_ENABLED=false
+TURNSTILE_SECRET=
+RESEND_API_KEY=
+NOTIFY_TO=someone@dlas.co.kr
+NOTIFY_FROM=noreply@dlas.co.kr
+FILE_TOKEN_SECRET=
+PUBLIC_SITE_ORIGIN=https://dlas.co.kr

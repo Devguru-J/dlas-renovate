@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dlas",
+  "main": "@astrojs/cloudflare/entrypoints/server",
+  // 설치된 workerd 바이너리가 지원하는 최신 날짜. 이보다 미래로 두면 빌드가 실패한다.
+  "compatibility_date": "2026-08-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
+  "r2_buckets": [
+    {
+      // about 페이지 영상. 정적 자산은 Range 요청에 206을 주지 않아 워커가 직접 서빙한다.
+      "binding": "MEDIA",
+      "bucket_name": "dlas-media"
+    },
+    {
+      "binding": "FORM_UPLOADS",
+      "bucket_name": "dlas-form-uploads",
+      "preview_bucket_name": "dlas-form-uploads-preview"
+    }
+  ]
+}
