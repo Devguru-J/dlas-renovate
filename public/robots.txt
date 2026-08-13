@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://dlas.co.kr/sitemap_index.xml
+Sitemap: https://dlas.co.kr/sitemap-index.xml
