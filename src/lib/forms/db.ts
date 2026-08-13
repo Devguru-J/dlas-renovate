@@ -26,6 +26,28 @@ export interface SupabaseConfig {
   serviceRoleKey: string;
 }
 
+/**
+ * PostgREST 오류 응답을 로그에 남겨도 안전한 요약으로 바꾼다.
+ * 제약조건 위반 시 PostgREST는 Postgres의 message/details를 그대로 돌려주는데,
+ * details는 "Failing row contains (…)" 형태로 고객 이름·전화번호를 담는다.
+ * 그 값이 워커 로그와 email_error 컬럼에 남지 않도록 상태코드와 기계 판독용
+ * code(있으면 일반적인 hint)만 남기고 본문은 버린다.
+ */
+async function describeError(res: Response): Promise<string> {
+  const parts = [`status=${res.status}`];
+  try {
+    const body: unknown = await res.json();
+    if (body !== null && typeof body === 'object') {
+      const obj = body as Record<string, unknown>;
+      if (typeof obj.code === 'string' && obj.code !== '') parts.push(`code=${obj.code}`);
+      if (typeof obj.hint === 'string' && obj.hint !== '') parts.push(`hint=${obj.hint}`);
+    }
+  } catch {
+    // JSON이 아니면 상태코드만 남긴다. 원문은 어떤 경우에도 포함하지 않는다.
+  }
+  return parts.join(' ');
+}
+
 export async function insertSubmission(
   cfg: SupabaseConfig,
   row: SubmissionRow,
@@ -44,7 +66,7 @@ export async function insertSubmission(
   });
 
   if (!res.ok) {
-    throw new Error(`supabase insert failed: ${res.status} ${await res.text()}`);
+    throw new Error(`supabase insert failed: ${await describeError(res)}`);
   }
 }
 
@@ -74,7 +96,7 @@ export async function updateEmailStatus(
       },
     );
     if (!res.ok) {
-      console.error('email status update failed', res.status, await res.text());
+      console.error('email status update failed', await describeError(res));
     }
   } catch (err) {
     console.error('email status update failed', err);
@@ -98,7 +120,7 @@ export async function fetchAttachments(
     },
   );
   if (!res.ok) {
-    throw new Error(`supabase select failed: ${res.status} ${await res.text()}`);
+    throw new Error(`supabase select failed: ${await describeError(res)}`);
   }
   const rows = (await res.json()) as { attachments: AttachmentMeta[] }[];
   return rows[0]?.attachments ?? [];

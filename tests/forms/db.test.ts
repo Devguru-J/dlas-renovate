@@ -49,13 +49,47 @@ describe('insertSubmission', () => {
     expect(JSON.parse(seen!.init.body as string).name).toBe('홍길동');
   });
 
-  it('실패 응답이면 본문을 포함한 에러를 던진다', async () => {
+  it('실패 응답이면 상태코드와 code만 담은 에러를 던진다', async () => {
     const fake: typeof fetch = async () =>
-      new Response('duplicate key value', { status: 409 });
+      new Response(JSON.stringify({ code: '23505', message: 'duplicate key value' }), {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      });
 
-    await expect(insertSubmission(CFG, row(), fake)).rejects.toThrow(
-      /409.*duplicate key value/,
-    );
+    await expect(insertSubmission(CFG, row(), fake)).rejects.toThrow(/status=409.*code=23505/);
+    await expect(insertSubmission(CFG, row(), fake)).rejects.not.toThrow(/duplicate key value/);
+  });
+
+  it('PostgREST 오류 본문의 고객 PII를 에러 메시지에 넣지 않는다', async () => {
+    const body = {
+      code: '23514',
+      message: 'new row for relation "contact_submissions" violates check constraint',
+      details: 'Failing row contains (홍길동, 010-1234-5678, …).',
+      hint: '제약조건을 확인하세요.',
+    };
+    const fake: typeof fetch = async () =>
+      new Response(JSON.stringify(body), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      });
+
+    const err = await insertSubmission(CFG, row(), fake).catch((e: unknown) => e as Error);
+    const text = String((err as Error).message);
+    expect(text).toContain('status=400');
+    expect(text).toContain('code=23514');
+    expect(text).toContain('hint=제약조건을 확인하세요.');
+    expect(text).not.toContain('홍길동');
+    expect(text).not.toContain('010-1234-5678');
+    expect(text).not.toContain('Failing row contains');
+    expect(text).not.toContain('violates check constraint');
+  });
+
+  it('본문이 JSON이 아니면 상태코드만 남긴다', async () => {
+    const fake: typeof fetch = async () =>
+      new Response('<html>홍길동 010-1234-5678</html>', { status: 502 });
+
+    const err = await insertSubmission(CFG, row(), fake).catch((e: unknown) => e as Error);
+    expect((err as Error).message).toBe('supabase insert failed: status=502');
   });
 
   it('URL 끝의 슬래시를 중복시키지 않는다', async () => {
@@ -138,8 +172,23 @@ describe('fetchAttachments', () => {
     expect(await fetchAttachments(CFG, 'none', fake)).toEqual([]);
   });
 
-  it('실패 응답이면 에러를 던진다', async () => {
+  it('실패 응답이면 본문 없이 상태코드만 담은 에러를 던진다', async () => {
     const fake: typeof fetch = async () => new Response('boom', { status: 500 });
-    await expect(fetchAttachments(CFG, 'sub-1', fake)).rejects.toThrow(/500.*boom/);
+    const err = await fetchAttachments(CFG, 'sub-1', fake).catch((e: unknown) => e as Error);
+    expect((err as Error).message).toBe('supabase select failed: status=500');
+  });
+
+  it('실패 응답의 PostgREST 본문을 에러 메시지에 넣지 않는다', async () => {
+    const fake: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({ code: '42P01', message: 'relation does not exist', details: '홍길동' }),
+        { status: 404, headers: { 'content-type': 'application/json' } },
+      );
+    const err = await fetchAttachments(CFG, 'sub-1', fake).catch((e: unknown) => e as Error);
+    const text = (err as Error).message;
+    expect(text).toContain('status=404');
+    expect(text).toContain('code=42P01');
+    expect(text).not.toContain('홍길동');
+    expect(text).not.toContain('relation does not exist');
   });
 });
