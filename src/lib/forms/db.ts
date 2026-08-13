@@ -151,12 +151,20 @@ export async function updateCrmStatus(
 }
 
 /**
- * 재시도 상한. 크론이 15분마다 돈다고 보면 8회는 약 2시간치다.
- * 503(연동 미설정)이나 CRM 배포 중 끊김 같은 일시 장애는 그 안에 대개 끝나고,
- * 그보다 오래 실패한다면 자동 재시도가 아니라 사람이 봐야 하는 문제다.
- * 상한이 있어야 영구 실패 건을 영원히 두드리지 않는다.
+ * 재시도 상한. 상한이 있어야 영구 실패 건(400·401·415 등)을 영원히 두드리지 않는다.
+ * 그보다 오래 실패한다면 자동 재시도로 풀릴 문제가 아니라 사람이 봐야 하는 문제다.
  */
 export const CRM_MAX_ATTEMPTS = 8;
+
+/**
+ * 같은 행을 다시 집기까지의 최소 간격.
+ *
+ * 이게 없으면 재시도 창이 크론 주기에 종속된다 — 1분마다 도는 크론이면 8회가 8분 만에
+ * 소진되고, 그보다 긴 503 장애를 만난 리드는 누가 손으로 카운터를 되돌릴 때까지 멈춘다.
+ * 30분 × 8회로 묶어 두면 크론이 얼마나 자주 돌든 재시도 창이 최소 4시간은 확보된다.
+ * 즉 상한은 "몇 번"이 아니라 "얼마 동안"을 뜻하게 된다.
+ */
+export const CRM_RETRY_SPACING_MS = 30 * 60 * 1000;
 
 /** SubmissionRow가 실제로 쓰는 컬럼만 뽑는다. 필요 없는 PII까지 끌고 오지 않는다. */
 const SUBMISSION_COLUMNS = [
@@ -181,20 +189,27 @@ const SUBMISSION_COLUMNS = [
 
 /**
  * 아직 CRM에 못 보낸 리드를 오래된 순으로 가져온다.
- * 조건: 미동기(crm_synced_at is null) + CRM 대상 폼 + 시도 상한 미도달.
+ * 조건: 미동기(crm_synced_at is null) + CRM 대상 폼 + 시도 상한 미도달
+ *      + (한 번도 시도 안 했거나 마지막 시도가 CRM_RETRY_SPACING_MS보다 오래됨).
  * 실패하면 던진다 — 호출부는 크론이므로 여기서 던져도 고객 제출에는 영향이 없다.
  */
 export async function fetchPendingCrmLeads(
   cfg: SupabaseConfig,
   limit: number,
   fetchImpl: typeof fetch = fetch,
+  now: Date = new Date(),
 ): Promise<SubmissionRow[]> {
   const base = cfg.url.replace(/\/+$/, '');
+  const cutoff = new Date(now.getTime() - CRM_RETRY_SPACING_MS).toISOString();
   const params = new URLSearchParams();
   params.set('select', SUBMISSION_COLUMNS);
   params.set('crm_synced_at', 'is.null');
   params.set('form_key', `in.(${CRM_FORM_KEYS.join(',')})`);
   params.set('crm_attempts', `lt.${CRM_MAX_ATTEMPTS}`);
+  params.set(
+    'or',
+    `(crm_last_attempt_at.is.null,crm_last_attempt_at.lt.${cutoff})`,
+  );
   params.set('order', 'created_at.asc');
   params.set('limit', String(limit));
 

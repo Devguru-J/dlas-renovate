@@ -6,6 +6,7 @@ import {
   fetchPendingCrmLeads,
   fetchAttachments,
   CRM_MAX_ATTEMPTS,
+  CRM_RETRY_SPACING_MS,
   type SubmissionRow,
 } from '../../src/lib/forms/db';
 
@@ -251,6 +252,24 @@ describe('fetchPendingCrmLeads', () => {
     expect(q.get('limit')).toBe('20');
     expect(q.get('select')).toContain('form_key');
     expect(q.get('select')).toContain('attachments');
+  });
+
+  it('한 번도 시도 안 했거나 마지막 시도가 간격보다 오래된 행만 집는다', async () => {
+    let seen = '';
+    const fake: typeof fetch = async (url) => {
+      seen = String(url);
+      return new Response('[]', { status: 200 });
+    };
+    const now = new Date('2026-08-13T12:00:00.000Z');
+
+    await fetchPendingCrmLeads(CFG, 20, fake, now);
+
+    const cutoff = new Date(now.getTime() - CRM_RETRY_SPACING_MS).toISOString();
+    expect(new URL(seen).searchParams.get('or')).toBe(
+      `(crm_last_attempt_at.is.null,crm_last_attempt_at.lt.${cutoff})`,
+    );
+    // 재시도 창(간격 × 상한)이 크론 주기와 무관하게 최소 4시간은 되어야 한다.
+    expect(CRM_RETRY_SPACING_MS * CRM_MAX_ATTEMPTS).toBeGreaterThanOrEqual(4 * 60 * 60 * 1000);
   });
 
   it('행을 그대로 돌려준다', async () => {

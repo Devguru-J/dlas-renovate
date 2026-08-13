@@ -1,4 +1,4 @@
-import type { FormKey } from './definitions';
+import { FORMS, type FormKey } from './definitions';
 import type { SubmissionRow } from './db';
 
 /**
@@ -24,13 +24,9 @@ export function crmTypeFor(formKey: FormKey): CrmType | null {
 }
 
 /** CRM이 받아주는 form_key 목록. crmTypeFor에서 파생시켜 두 곳이 어긋나지 않게 한다. */
-const ALL_FORM_KEYS: readonly FormKey[] = [
-  'analysis',
-  'consulting-new-car',
-  'consulting-used-car',
-  'consulting-detailing',
-];
-export const CRM_FORM_KEYS: readonly FormKey[] = ALL_FORM_KEYS.filter(
+// 폼 목록을 손으로 베끼지 않고 FORMS에서 뽑는다. 폼이 늘어나면 여기도 저절로 따라온다.
+// (583이 신차·중고차 두 페이지에 공유되므로 key 중복을 제거한다.)
+export const CRM_FORM_KEYS: readonly FormKey[] = [...new Set(FORMS.map((f) => f.key))].filter(
   (k) => crmTypeFor(k) !== null,
 );
 
@@ -134,6 +130,8 @@ function redactSecret(text: string, secret: string): string {
 
 function fail(status: number | null, detail: string, retryable: boolean, secret: string): CrmOutcome {
   const head = status === null ? 'network' : `status=${status}`;
+  // 시크릿 마스킹과 길이 제한은 1차 방어선이 아니라 최후의 방어선이다.
+  // 1차 방어는 애초에 기계 판독용 값만 detail에 담는 것이다(describeCrmError 참고).
   const body = redactSecret(detail, secret);
   const reason = body === '' ? head : `${head} ${body}`;
   return {
@@ -144,12 +142,34 @@ function fail(status: number | null, detail: string, retryable: boolean, secret:
   };
 }
 
-async function readBodyExcerpt(res: Response, secret: string): Promise<string> {
+/**
+ * 기계 판독용 코드로만 인정하는 형태.
+ * 반드시 영문자로 시작해야 한다 — 이 한 줄이 고객 입력을 걸러낸다.
+ * 전화번호("010-1234-5678")는 숫자로 시작하니 탈락하고, 한글 이름은 ASCII가 아니라 탈락한다.
+ */
+const ERROR_CODE = /^[A-Za-z][A-Za-z0-9_.:-]{0,39}$/;
+
+/**
+ * 실패 응답을 로그·crm_error 컬럼에 남겨도 안전한 요약으로 바꾼다.
+ *
+ * db.ts의 describeError와 같은 규율이다. CRM의 400은 "필수 항목 누락·형식 오류"인데,
+ * 잘못된 값을 알려주는 가장 흔한 방식이 그 값을 되비추는 것이다. 즉 본문 발췌를 남기면
+ * 고객 이름·전화번호가 그대로 DB 컬럼과 워커 로그에 박힌다.
+ * 그래서 본문에서 가져오는 것은 화이트리스트를 통과한 code 하나뿐이고, 나머지는 전부 버린다.
+ * error 같은 자유 문구 필드는 값을 되비추지 않는다고 보장할 수 없으므로 아예 쓰지 않는다.
+ * JSON이 아니면 상태코드만 남는다.
+ */
+async function describeCrmError(res: Response): Promise<string> {
   try {
-    return redactSecret(excerpt(await res.text()), secret);
+    const json: unknown = await res.json();
+    if (json !== null && typeof json === 'object') {
+      const code = (json as Record<string, unknown>).code;
+      if (typeof code === 'string' && ERROR_CODE.test(code)) return `code=${code}`;
+    }
   } catch {
-    return '';
+    // JSON이 아니거나 본문을 읽다 끊겼다. 상태코드만으로 충분하다.
   }
+  return '';
 }
 
 /**
@@ -172,6 +192,8 @@ export async function pushLead(
     });
   } catch (err) {
     // 네트워크 오류는 CRM이 받았는지조차 모른다. submissionId가 멱등키라 재시도해도 안전하다.
+    // 이 메시지는 상대측 본문이 아니라 우리 런타임이 만든 문자열이라("fetch failed" 등)
+    // 고객 입력을 되비출 경로가 없다. 그래서 여기서만 문구를 남긴다.
     const msg = err instanceof Error ? excerpt(err.message) : '';
     return fail(null, msg, true, cfg.secret);
   }
@@ -192,7 +214,7 @@ export async function pushLead(
     };
   }
 
-  const detail = await readBodyExcerpt(res, cfg.secret);
+  const detail = await describeCrmError(res);
   // 5xx는 CRM 쪽 일시 상태(503 = 연동 미설정 포함)로 보고 재시도한다.
   // 4xx는 같은 본문을 다시 보내도 같은 답이 오므로 재시도하지 않는다.
   return fail(res.status, detail, res.status >= 500, cfg.secret);

@@ -222,6 +222,16 @@ describe('pushLead 응답 분류', () => {
     }
   });
 
+  it('3xx는 성공도 아니고 재시도 대상도 아니다', async () => {
+    // fetch가 리다이렉트를 따르므로 여기까지 오는 3xx는 설정 문제다. 다시 보내도 같다.
+    const out = await pushLead(CFG, new FormData(), respond(302, 'moved'));
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.status).toBe(302);
+      expect(out.retryable).toBe(false);
+    }
+  });
+
   it('fetch가 reject하면 던지지 않고 재시도 대상 실패를 돌려준다', async () => {
     const fake: typeof fetch = async () => {
       throw new Error('network down');
@@ -259,8 +269,91 @@ describe('pushLead 실패 사유의 안전성', () => {
     if (!out.ok) expect(out.reason).not.toContain('sh-secret-42');
   });
 
-  it('사유 길이를 제한하고 제어문자를 남기지 않는다', async () => {
-    const out = await pushLead(CFG, new FormData(), respond(400, `a\n\tb${'x'.repeat(5000)}`));
+  it('오류 본문의 고객 PII를 사유에 넣지 않는다', async () => {
+    // CRM의 400은 "필수 항목 누락·형식 오류"다. 어느 값이 잘못됐는지 알려주려고
+    // 그 값을 되비추는 것이 가장 흔한 형태라, 본문 발췌를 남기면 고객 PII가 그대로 박힌다.
+    const body = {
+      error: 'phone 형식이 올바르지 않습니다: 010-1234-5678',
+      message: '홍길동 님의 요청을 처리할 수 없습니다',
+      details: { name: '홍길동', phone: '010-1234-5678' },
+    };
+    const out = await pushLead(CFG, new FormData(), respond(400, JSON.stringify(body), JSON_H));
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.reason).toBe('status=400');
+      expect(out.reason).not.toContain('홍길동');
+      expect(out.reason).not.toContain('010-1234-5678');
+      expect(out.reason).not.toContain('형식이 올바르지 않습니다');
+    }
+  });
+
+  it('code는 영문자로 시작하는 식별자일 때만 남긴다', async () => {
+    const ok = await pushLead(
+      CFG,
+      new FormData(),
+      respond(400, JSON.stringify({ code: 'MISSING_FIELD' }), JSON_H),
+    );
+    expect(ok.ok).toBe(false);
+    if (!ok.ok) expect(ok.reason).toBe('status=400 code=MISSING_FIELD');
+
+    // 전화번호가 code 자리에 들어와도 숫자로 시작하니 통과하지 못한다.
+    for (const code of ['010-1234-5678', '홍길동', 'x'.repeat(60), '']) {
+      const out = await pushLead(
+        CFG,
+        new FormData(),
+        respond(400, JSON.stringify({ code }), JSON_H),
+      );
+      expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.reason).toBe('status=400');
+    }
+  });
+
+  it('본문이 JSON이 아니면 상태코드만 남긴다', async () => {
+    const out = await pushLead(
+      CFG,
+      new FormData(),
+      respond(400, '<html>홍길동 010-1234-5678</html>'),
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.reason).toBe('status=400');
+  });
+
+  it('code 자리에 시크릿이 와도 마스킹한다', async () => {
+    const out = await pushLead(
+      CFG,
+      new FormData(),
+      respond(401, JSON.stringify({ code: CFG.secret }), JSON_H),
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.reason).not.toContain('sh-secret-42');
+      expect(out.reason).toBe('status=401 code=***');
+    }
+  });
+
+  it('본문을 읽다 끊겨도 상태코드만 남기고 던지지 않는다', async () => {
+    const fake: typeof fetch = async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new Error('stream broke'));
+          },
+        }),
+        { status: 500, headers: JSON_H },
+      );
+    const out = await pushLead(CFG, new FormData(), fake);
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.reason).toBe('status=500');
+      expect(out.retryable).toBe(true);
+    }
+  });
+
+  it('네트워크 오류 사유의 길이를 제한하고 제어문자를 남기지 않는다', async () => {
+    const fake: typeof fetch = async () => {
+      throw new Error(`a\n\tb${'x'.repeat(5000)}`);
+    };
+    const out = await pushLead(CFG, new FormData(), fake);
     expect(out.ok).toBe(false);
     if (!out.ok) {
       expect(out.reason.length).toBeLessThanOrEqual(200);
