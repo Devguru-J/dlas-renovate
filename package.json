@@ -15,7 +15,8 @@
   "dependencies": {
     "@astrojs/cloudflare": "^14.2.1",
     "@astrojs/sitemap": "^3.7.3",
-    "astro": "^7.2.0"
+    "astro": "^7.2.0",
+    "hono": "^4.13.1"
   },
   "allowScripts": {
     "esbuild@0.28.2": true
