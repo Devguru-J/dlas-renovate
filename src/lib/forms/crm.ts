@@ -173,10 +173,30 @@ async function describeCrmError(res: Response): Promise<string> {
 }
 
 /**
+ * 다시 보내면 답이 달라질 수 있는 상태인지 판정한다.
+ *
+ * 5xx: CRM 쪽 일시 상태다. 계약서가 "연동 미설정"으로 예약해 둔 503도 여기 든다.
+ *
+ * 404: 계약서는 미배포 상태를 503으로 상정했지만, 실제로는 라우트가 아직 없어서 404가 온다
+ *      (2026-08-13 확인: 도메인은 200, POST /api/homepage/lead는 404 {"error":"Not found"}).
+ *      우리가 직접 지정한 연동 엔드포인트의 404는 데이터 문제가 아니라 배포·라우팅 상태다.
+ *      재시도 대상에서 빼면 상대측 배포 전에 들어온 리드가 전부 영구 실패로 찍히고,
+ *      엔드포인트가 살아난 뒤에도 영영 집히지 않는다 — 이 재시도 장치가 막으려는 바로 그 사고다.
+ *      URL을 영영 잘못 적어 둔 경우는 시도 상한이 막아 준다(예산을 소진하고 알림으로 드러난다).
+ *
+ * 400·413·415: "이 페이로드"가 받아들여지지 않는다는 뜻이고, 같은 본문은 언제 보내도 같은 답이다.
+ * 401: 시크릿 불일치. 사람이 고쳐야 할 설정 오류라, 재시도는 거절된 인증을 반복할 뿐이다.
+ * 3xx: fetch가 리다이렉트를 따르므로 여기까지 왔다면 설정 문제다.
+ */
+function isRetryable(status: number): boolean {
+  return status >= 500 || status === 404;
+}
+
+/**
  * CRM에 리드를 전송하고 결과를 분류한다. 던지지 않는다 — 모든 결과가 CrmOutcome이다.
  *
- * 201 성공 / 200 성공(중복) / 503·기타 5xx·네트워크 오류는 재시도 대상 /
- * 400·401·413·415를 포함한 모든 4xx는 재시도해도 소용없다.
+ * 201 성공 / 200 성공(중복) / 404·503·기타 5xx·네트워크 오류는 재시도 대상 /
+ * 400·401·413·415를 포함한 나머지 4xx와 3xx는 재시도해도 소용없다.
  */
 export async function pushLead(
   cfg: CrmConfig,
@@ -215,7 +235,5 @@ export async function pushLead(
   }
 
   const detail = await describeCrmError(res);
-  // 5xx는 CRM 쪽 일시 상태(503 = 연동 미설정 포함)로 보고 재시도한다.
-  // 4xx는 같은 본문을 다시 보내도 같은 답이 오므로 재시도하지 않는다.
-  return fail(res.status, detail, res.status >= 500, cfg.secret);
+  return fail(res.status, detail, isRetryable(res.status), cfg.secret);
 }

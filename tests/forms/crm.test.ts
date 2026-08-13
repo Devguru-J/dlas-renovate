@@ -214,11 +214,40 @@ describe('pushLead 응답 분류', () => {
   });
 
   it('그 밖의 4xx도 재시도 대상이 아니다', async () => {
-    const out = await pushLead(CFG, new FormData(), respond(404, 'no route'));
+    for (const status of [409, 418, 422]) {
+      const out = await pushLead(CFG, new FormData(), respond(status, 'nope'));
+      expect(out.ok).toBe(false);
+      if (!out.ok) {
+        expect(out.status).toBe(status);
+        expect(out.retryable).toBe(false);
+      }
+    }
+  });
+
+  it('404는 4xx지만 재시도 대상이다', async () => {
+    // 상대측 라우트 미배포 상태가 404로 온다(2026-08-13 확인). 배포 전에 들어온 리드가
+    // 영구 실패로 찍혀 버리면 엔드포인트가 살아나도 영영 집히지 않는다.
+    const out = await pushLead(
+      CFG,
+      new FormData(),
+      respond(404, JSON.stringify({ error: 'Not found' }), JSON_H),
+    );
     expect(out.ok).toBe(false);
     if (!out.ok) {
-      expect(out.retryable).toBe(false);
       expect(out.status).toBe(404);
+      expect(out.retryable).toBe(true);
+      expect(out.reason).toBe('status=404');
+    }
+  });
+
+  it('404와 400을 뭉뚱그리지 않는다', async () => {
+    const notFound = await pushLead(CFG, new FormData(), respond(404, 'no route'));
+    const badRequest = await pushLead(CFG, new FormData(), respond(400, 'bad field'));
+    expect(notFound.ok).toBe(false);
+    expect(badRequest.ok).toBe(false);
+    if (!notFound.ok && !badRequest.ok) {
+      expect(notFound.retryable).toBe(true);
+      expect(badRequest.retryable).toBe(false);
     }
   });
 
