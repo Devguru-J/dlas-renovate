@@ -12,6 +12,11 @@
   },
   "r2_buckets": [
     {
+      // about 페이지 영상. 정적 자산은 Range 요청에 206을 주지 않아 워커가 직접 서빙한다.
+      "binding": "MEDIA",
+      "bucket_name": "dlas-media"
+    },
+    {
       "binding": "FORM_UPLOADS",
       "bucket_name": "dlas-form-uploads",
       "preview_bucket_name": "dlas-form-uploads-preview"
