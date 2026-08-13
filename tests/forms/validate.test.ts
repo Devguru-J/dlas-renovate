@@ -63,7 +63,7 @@ describe('validateText', () => {
       'your-name': '홍길동',
       'your-phone': '010-1234-5678',
       'your-car': 'BMW 520i',
-      'your-method[]': ['리스', '할부'],
+      'your-method[]': ['운용리스', '할부'],
       'your-pay[]': ['이번 달'],
       'your-message': '견적 부탁드립니다',
       dl_ref: 'naver',
@@ -76,7 +76,7 @@ describe('validateText', () => {
       name: '홍길동',
       phone: '010-1234-5678',
       car: 'BMW 520i',
-      methods: ['리스', '할부'],
+      methods: ['운용리스', '할부'],
       payPeriod: ['이번 달'],
       message: '견적 부탁드립니다',
       ref: 'naver',
@@ -141,7 +141,7 @@ describe('validateText', () => {
       'your-name': '홍길동',
       'your-phone': '010-1234-5678',
       'your-car': 'X',
-      'your-method[]': ['리스', '<script>'],
+      'your-method[]': ['운용리스', '<script>'],
       'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);
@@ -157,7 +157,7 @@ describe('validateText', () => {
       'your-name': '홍길동',
       'your-phone': '전화주세요',
       'your-car': 'X',
-      'your-method[]': ['리스'],
+      'your-method[]': ['운용리스'],
       'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);
@@ -173,7 +173,7 @@ describe('validateText', () => {
       'your-name': '홍길동',
       'your-phone': '010-123',
       'your-car': 'X',
-      'your-method[]': ['리스'],
+      'your-method[]': ['운용리스'],
       'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);
@@ -200,7 +200,7 @@ describe('validateText', () => {
       'your-name': 'ㄱ'.repeat(401),
       'your-phone': '010-1234-5678',
       'your-car': 'X',
-      'your-method[]': ['리스'],
+      'your-method[]': ['운용리스'],
       'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);
@@ -214,7 +214,7 @@ describe('validateText', () => {
       'your-name': '홍길동',
       'your-phone': '010-1234-5678',
       'your-car': 'X',
-      'your-method[]': ['리스'],
+      'your-method[]': ['운용리스'],
       'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);

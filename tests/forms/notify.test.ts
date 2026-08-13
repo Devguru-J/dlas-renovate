@@ -10,7 +10,7 @@ function row(over: Partial<SubmissionRow> = {}): SubmissionRow {
     name: '홍길동',
     phone: '010-1234-5678',
     car: 'BMW 520i',
-    methods: ['리스', '할부'],
+    methods: ['운용리스', '할부'],
     pay_period: ['이번 달'],
     message: '견적 부탁드립니다',
     ref: 'naver',
@@ -39,7 +39,7 @@ describe('buildEmail', () => {
 
   it('체크박스는 쉼표로 이어 붙인다', () => {
     const { html } = buildEmail(row(), []);
-    expect(html).toContain('리스, 할부');
+    expect(html).toContain('운용리스, 할부');
     expect(html).toContain('이번 달');
   });
 

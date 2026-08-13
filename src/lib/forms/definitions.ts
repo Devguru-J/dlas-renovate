@@ -60,7 +60,7 @@ export interface FormDefinition {
   statusMessages: StatusMessages;
 }
 
-const PURCHASE_METHODS = ['리스', '장기렌트', '할부', '현금'];
+const PURCHASE_METHODS = ['운용리스', '장기렌트', '할부', '일시불'];
 const PURCHASE_TIMING = ['이번 달', '다음 달', '3개월 이내', '미정'];
 
 const TOO_LONG = '내용이 너무 깁니다.';

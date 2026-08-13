@@ -46,7 +46,7 @@ describe('FORMS', () => {
   });
 
   it('체크박스 값이 원문 그대로다', () => {
-    expect(findForm('583', '580')!.methodValues).toEqual(['리스', '장기렌트', '할부', '현금']);
+    expect(findForm('583', '580')!.methodValues).toEqual(['운용리스', '장기렌트', '할부', '일시불']);
     expect(findForm('631', '626')!.methodValues).toEqual([
       '신차패키지', '디테일링', '유리막/광택', 'PPF/랩핑', '가죽코팅', '기타',
     ]);
