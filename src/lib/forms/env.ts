@@ -1,3 +1,5 @@
+import type { CrmConfig } from './crm';
+
 export interface FormsEnv {
   supabaseUrl: string;
   supabaseServiceRoleKey: string;
@@ -11,6 +13,13 @@ export interface FormsEnv {
   notifyFrom: string;
   fileTokenSecret: string;
   siteOrigin: string;
+  // CRM 연동은 선택이다. 상대측 시크릿이 오기 전에도 사이트는 그대로 동작해야 하므로
+  // CRM_HOMEPAGE_SECRET이 없으면 "실패"가 아니라 "전송 생략"이다.
+  // turnstileSecret과 같은 방식으로 string | null을 쓴다 — as 캐스트 없이
+  // crmConfig()의 null 반환을 좁혀야만 pushLead를 호출할 수 있게 만든다.
+  crmSecret: string | null;
+  /** 스테이징 CRM으로 돌릴 수 있도록 변수로 뺀다. 기본값은 계약서의 운영 URL. */
+  crmEndpoint: string;
 }
 
 /**
@@ -45,6 +54,28 @@ function readTurnstileEnabled(source: Record<string, unknown>): boolean {
   );
 }
 
+/** 없거나 공백이면 null. required와 달리 던지지 않는다. */
+function optional(source: Record<string, unknown>, name: string): string | null {
+  const v = source[name];
+  if (typeof v !== 'string' || v.trim() === '') return null;
+  return v.trim();
+}
+
+/** 계약서(docs/crm-lead-integration.md)의 운영 엔드포인트. */
+export const DEFAULT_CRM_ENDPOINT = 'https://crm.mrcha.app/api/homepage/lead';
+
+/**
+ * 시크릿이 없으면 null이다. 호출부는 이 null을 좁혀야만 pushLead에 도달할 수 있어,
+ * 시크릿 없이 CRM을 호출하는 코드는 애초에 타입으로 표현되지 않는다.
+ */
+export function crmConfig(env: {
+  crmSecret: string | null;
+  crmEndpoint: string;
+}): CrmConfig | null {
+  if (env.crmSecret === null) return null;
+  return { endpoint: env.crmEndpoint, secret: env.crmSecret };
+}
+
 export function readFileEnv(source: Record<string, unknown>): FileEnv {
   return {
     supabaseUrl: required(source, 'SUPABASE_URL'),
@@ -68,5 +99,7 @@ export function readEnv(source: Record<string, unknown>): FormsEnv {
     notifyFrom: required(source, 'NOTIFY_FROM'),
     fileTokenSecret: required(source, 'FILE_TOKEN_SECRET'),
     siteOrigin: required(source, 'PUBLIC_SITE_ORIGIN').replace(/\/+$/, ''),
+    crmSecret: optional(source, 'CRM_HOMEPAGE_SECRET'),
+    crmEndpoint: optional(source, 'CRM_ENDPOINT') ?? DEFAULT_CRM_ENDPOINT,
   };
 }

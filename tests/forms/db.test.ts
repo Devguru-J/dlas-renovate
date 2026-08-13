@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   insertSubmission,
   updateEmailStatus,
+  updateCrmStatus,
+  fetchPendingCrmLeads,
   fetchAttachments,
+  CRM_MAX_ATTEMPTS,
   type SubmissionRow,
 } from '../../src/lib/forms/db';
 
@@ -142,6 +145,132 @@ describe('updateEmailStatus', () => {
     await expect(
       updateEmailStatus(CFG, 'sub-1', { email_sent_at: null, email_error: 'x' }, fake),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('updateCrmStatus', () => {
+  it('성공 결과를 id로 좁혀 PATCH한다', async () => {
+    let seen: { url: string; init: RequestInit } | null = null;
+    const fake: typeof fetch = async (url, init) => {
+      seen = { url: String(url), init: init as RequestInit };
+      return new Response(null, { status: 204 });
+    };
+
+    await updateCrmStatus(
+      CFG,
+      'sub-1',
+      {
+        crm_synced_at: '2026-08-13T00:00:00Z',
+        crm_record_id: 'c-1',
+        crm_error: null,
+        crm_attempts: 1,
+        crm_last_attempt_at: '2026-08-13T00:00:00Z',
+      },
+      fake,
+    );
+
+    expect(seen!.url).toBe('https://proj.supabase.co/rest/v1/contact_submissions?id=eq.sub-1');
+    expect(seen!.init.method).toBe('PATCH');
+    const headers = seen!.init.headers as Record<string, string>;
+    expect(headers.apikey).toBe('service-key');
+    expect(JSON.parse(seen!.init.body as string)).toEqual({
+      crm_synced_at: '2026-08-13T00:00:00Z',
+      crm_record_id: 'c-1',
+      crm_error: null,
+      crm_attempts: 1,
+      crm_last_attempt_at: '2026-08-13T00:00:00Z',
+    });
+  });
+
+  it('실패 결과는 crm_synced_at을 건드리지 않고 보낼 수 있다', async () => {
+    let body = '';
+    const fake: typeof fetch = async (_url, init) => {
+      body = (init as RequestInit).body as string;
+      return new Response(null, { status: 204 });
+    };
+    await updateCrmStatus(
+      CFG,
+      'sub-1',
+      { crm_error: 'status=503', crm_attempts: 3, crm_last_attempt_at: '2026-08-13T00:00:00Z' },
+      fake,
+    );
+    expect(Object.keys(JSON.parse(body))).toEqual([
+      'crm_error',
+      'crm_attempts',
+      'crm_last_attempt_at',
+    ]);
+  });
+
+  it('실패 응답이어도 던지지 않는다', async () => {
+    const fake: typeof fetch = async () =>
+      new Response(JSON.stringify({ code: '42703', details: '홍길동' }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(
+      updateCrmStatus(
+        CFG,
+        'sub-1',
+        { crm_error: 'x', crm_attempts: 1, crm_last_attempt_at: 'now' },
+        fake,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('fetch가 reject해도 던지지 않는다', async () => {
+    const fake: typeof fetch = async () => {
+      throw new Error('network down');
+    };
+    await expect(
+      updateCrmStatus(
+        CFG,
+        'sub-1',
+        { crm_error: 'x', crm_attempts: 1, crm_last_attempt_at: 'now' },
+        fake,
+      ),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('fetchPendingCrmLeads', () => {
+  it('미동기·CRM 대상 폼·시도 상한 미만을 오래된 순으로 조회한다', async () => {
+    let seen = '';
+    const fake: typeof fetch = async (url) => {
+      seen = String(url);
+      return new Response('[]', { status: 200 });
+    };
+
+    await fetchPendingCrmLeads(CFG, 20, fake);
+
+    const q = new URL(seen).searchParams;
+    expect(seen.startsWith('https://proj.supabase.co/rest/v1/contact_submissions?')).toBe(true);
+    expect(q.get('crm_synced_at')).toBe('is.null');
+    expect(q.get('form_key')).toBe('in.(analysis,consulting-new-car)');
+    expect(q.get('crm_attempts')).toBe(`lt.${CRM_MAX_ATTEMPTS}`);
+    expect(q.get('order')).toBe('created_at.asc');
+    expect(q.get('limit')).toBe('20');
+    expect(q.get('select')).toContain('form_key');
+    expect(q.get('select')).toContain('attachments');
+  });
+
+  it('행을 그대로 돌려준다', async () => {
+    const fake: typeof fetch = async () => new Response(JSON.stringify([row()]), { status: 200 });
+    const rows = await fetchPendingCrmLeads(CFG, 5, fake);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('11111111-2222-3333-4444-555555555555');
+  });
+
+  it('실패 응답이면 본문 없이 상태코드만 담은 에러를 던진다', async () => {
+    const fake: typeof fetch = async () =>
+      new Response(JSON.stringify({ code: '42703', details: 'Failing row contains (홍길동)' }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      });
+    const err = await fetchPendingCrmLeads(CFG, 5, fake).catch((e: unknown) => e as Error);
+    const text = (err as Error).message;
+    expect(text).toContain('status=400');
+    expect(text).toContain('code=42703');
+    expect(text).not.toContain('홍길동');
   });
 });
 

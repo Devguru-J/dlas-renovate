@@ -1,0 +1,270 @@
+import { describe, it, expect } from 'vitest';
+import {
+  crmTypeFor,
+  buildCrmForm,
+  pushLead,
+  CRM_FORM_KEYS,
+  type CrmAttachment,
+  type CrmConfig,
+} from '../../src/lib/forms/crm';
+import type { SubmissionRow } from '../../src/lib/forms/db';
+
+const CFG: CrmConfig = { endpoint: 'https://crm.example/api/homepage/lead', secret: 'sh-secret-42' };
+
+function row(over: Partial<SubmissionRow> = {}): SubmissionRow {
+  return {
+    id: '11111111-2222-3333-4444-555555555555',
+    form_key: 'consulting-new-car',
+    form_subject: '신차 상담신청',
+    name: '홍길동',
+    phone: '010-1234-5678',
+    car: 'BMW 520i 검정',
+    methods: ['운용리스'],
+    pay_period: ['이번 달'],
+    message: '오전에 연락 주세요',
+    ref: null,
+    referer_page: null,
+    source_page: 'https://dlas.co.kr/consulting/',
+    attachments: [],
+    email_sent_at: null,
+    email_error: null,
+    ip_hash: null,
+    user_agent: null,
+    ...over,
+  };
+}
+
+function attachment(n: number, filename: string): CrmAttachment {
+  return {
+    n,
+    filename,
+    contentType: 'application/pdf',
+    body: new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer,
+  };
+}
+
+describe('crmTypeFor', () => {
+  it('analysis는 quote다', () => {
+    expect(crmTypeFor('analysis')).toBe('quote');
+  });
+  it('consulting-new-car는 consult다', () => {
+    expect(crmTypeFor('consulting-new-car')).toBe('consult');
+  });
+  it('consulting-used-car는 CRM 대상이 아니다', () => {
+    expect(crmTypeFor('consulting-used-car')).toBeNull();
+  });
+  it('consulting-detailing은 CRM 대상이 아니다', () => {
+    expect(crmTypeFor('consulting-detailing')).toBeNull();
+  });
+  it('CRM_FORM_KEYS는 대상 두 개뿐이다', () => {
+    expect([...CRM_FORM_KEYS].sort()).toEqual(['analysis', 'consulting-new-car']);
+  });
+});
+
+describe('buildCrmForm', () => {
+  it('consult 필드를 계약대로 매핑한다', () => {
+    const f = buildCrmForm(row(), []);
+    expect(f.get('type')).toBe('consult');
+    expect(f.get('submissionId')).toBe('11111111-2222-3333-4444-555555555555');
+    expect(f.get('name')).toBe('홍길동');
+    expect(f.get('phone')).toBe('010-1234-5678');
+    expect(f.get('desiredModel')).toBe('BMW 520i 검정');
+    expect(f.get('inquiry')).toBe('오전에 연락 주세요');
+  });
+
+  it('submissionId에 접두사를 붙이지 않는다', () => {
+    const f = buildCrmForm(row({ id: 'abc-123' }), []);
+    expect(f.get('submissionId')).toBe('abc-123');
+  });
+
+  it('methods/pay_period의 첫 원소 하나만 단일 값으로 보낸다', () => {
+    const f = buildCrmForm(row({ methods: ['장기렌트', '할부'], pay_period: ['다음 달'] }), []);
+    expect(f.getAll('purchaseMethod')).toEqual(['장기렌트']);
+    expect(f.get('purchaseTiming')).toBe('다음 달');
+  });
+
+  it('배열이 비면 필드 자체를 넣지 않는다', () => {
+    const f = buildCrmForm(row({ methods: [], pay_period: [] }), []);
+    expect(f.has('purchaseMethod')).toBe(false);
+    expect(f.has('purchaseTiming')).toBe(false);
+  });
+
+  it('빈 선택 필드는 생략한다', () => {
+    const f = buildCrmForm(row({ message: null, car: '   ' }), []);
+    expect(f.has('inquiry')).toBe(false);
+    expect(f.has('desiredModel')).toBe(false);
+  });
+
+  it('quote는 첨부를 file1·file2로 싣는다', () => {
+    const f = buildCrmForm(row({ form_key: 'analysis', form_subject: '견적서 비교분석' }), [
+      attachment(1, 'a.pdf'),
+      attachment(2, 'b.pdf'),
+    ]);
+    expect(f.get('type')).toBe('quote');
+    expect((f.get('file1') as File).name).toBe('a.pdf');
+    expect((f.get('file2') as File).name).toBe('b.pdf');
+    expect((f.get('file1') as File).type).toBe('application/pdf');
+  });
+
+  it('quote는 첨부를 2개까지만 싣는다', () => {
+    const f = buildCrmForm(row({ form_key: 'analysis' }), [
+      attachment(1, 'a.pdf'),
+      attachment(2, 'b.pdf'),
+      attachment(3, 'c.pdf'),
+    ]);
+    expect(f.has('file2')).toBe(true);
+    expect(f.has('file3')).toBe(false);
+  });
+
+  it('consult에는 첨부를 넣지 않는다', () => {
+    const f = buildCrmForm(row(), [attachment(1, 'a.pdf')]);
+    expect(f.has('file1')).toBe(false);
+  });
+
+  it('quote에는 consult 전용 필드를 넣지 않는다', () => {
+    const f = buildCrmForm(row({ form_key: 'analysis' }), []);
+    expect(f.has('desiredModel')).toBe(false);
+    expect(f.has('purchaseMethod')).toBe(false);
+    expect(f.has('purchaseTiming')).toBe(false);
+  });
+
+  it('CRM 대상이 아닌 폼이면 던진다', () => {
+    expect(() => buildCrmForm(row({ form_key: 'consulting-detailing' }), [])).toThrow(
+      /consulting-detailing/,
+    );
+  });
+});
+
+function respond(status: number, body = '', headers: Record<string, string> = {}): typeof fetch {
+  return async () => new Response(body === '' ? null : body, { status, headers });
+}
+
+const JSON_H = { 'content-type': 'application/json' };
+
+describe('pushLead 응답 분류', () => {
+  it('시크릿을 헤더로 실어 POST한다', async () => {
+    let seen: { url: string; init: RequestInit } | null = null;
+    const fake: typeof fetch = async (url, init) => {
+      seen = { url: String(url), init: init as RequestInit };
+      return new Response(null, { status: 201 });
+    };
+    await pushLead(CFG, new FormData(), fake);
+    expect(seen!.url).toBe('https://crm.example/api/homepage/lead');
+    expect(seen!.init.method).toBe('POST');
+    expect((seen!.init.headers as Record<string, string>)['x-homepage-secret']).toBe('sh-secret-42');
+  });
+
+  it('201은 성공이고 중복이 아니다', async () => {
+    const out = await pushLead(
+      CFG,
+      new FormData(),
+      respond(201, JSON.stringify({ customerId: 'c-1', customerCode: 'DL-0001' }), JSON_H),
+    );
+    expect(out).toEqual({ ok: true, duplicate: false, customerId: 'c-1', customerCode: 'DL-0001' });
+  });
+
+  it('200은 성공이고 중복이다', async () => {
+    const out = await pushLead(
+      CFG,
+      new FormData(),
+      respond(200, JSON.stringify({ duplicate: true, customerId: 'c-1', customerCode: 'DL-0001' }), JSON_H),
+    );
+    expect(out).toEqual({ ok: true, duplicate: true, customerId: 'c-1', customerCode: 'DL-0001' });
+  });
+
+  it('본문이 JSON이 아니어도 상태코드로 성공 판정한다', async () => {
+    const out = await pushLead(CFG, new FormData(), respond(201, 'OK'));
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.customerId).toBeNull();
+      expect(out.customerCode).toBeNull();
+    }
+  });
+
+  it('503은 재시도 대상 실패다', async () => {
+    const out = await pushLead(CFG, new FormData(), respond(503, 'not configured'));
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.status).toBe(503);
+      expect(out.retryable).toBe(true);
+      expect(out.reason).toContain('status=503');
+    }
+  });
+
+  it('503이 아닌 5xx도 재시도 대상이다', async () => {
+    for (const status of [500, 502, 504]) {
+      const out = await pushLead(CFG, new FormData(), respond(status, 'boom'));
+      expect(out.ok).toBe(false);
+      if (!out.ok) {
+        expect(out.status).toBe(status);
+        expect(out.retryable).toBe(true);
+      }
+    }
+  });
+
+  it('400·401·413·415는 재시도 대상이 아니다', async () => {
+    for (const status of [400, 401, 413, 415]) {
+      const out = await pushLead(CFG, new FormData(), respond(status, 'nope'));
+      expect(out.ok).toBe(false);
+      if (!out.ok) {
+        expect(out.status).toBe(status);
+        expect(out.retryable).toBe(false);
+      }
+    }
+  });
+
+  it('그 밖의 4xx도 재시도 대상이 아니다', async () => {
+    const out = await pushLead(CFG, new FormData(), respond(404, 'no route'));
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.retryable).toBe(false);
+      expect(out.status).toBe(404);
+    }
+  });
+
+  it('fetch가 reject하면 던지지 않고 재시도 대상 실패를 돌려준다', async () => {
+    const fake: typeof fetch = async () => {
+      throw new Error('network down');
+    };
+    const out = await pushLead(CFG, new FormData(), fake);
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.status).toBeNull();
+      expect(out.retryable).toBe(true);
+      expect(out.reason).toContain('network');
+    }
+  });
+});
+
+describe('pushLead 실패 사유의 안전성', () => {
+  it('응답이 시크릿을 되비춰도 사유에 남기지 않는다', async () => {
+    const out = await pushLead(
+      CFG,
+      new FormData(),
+      respond(401, `bad secret: ${CFG.secret} (x-homepage-secret)`),
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.reason).not.toContain('sh-secret-42');
+      expect(out.reason).toContain('status=401');
+    }
+  });
+
+  it('네트워크 오류 메시지에 시크릿이 섞여도 남기지 않는다', async () => {
+    const fake: typeof fetch = async () => {
+      throw new Error(`connect failed with sh-secret-42`);
+    };
+    const out = await pushLead(CFG, new FormData(), fake);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.reason).not.toContain('sh-secret-42');
+  });
+
+  it('사유 길이를 제한하고 제어문자를 남기지 않는다', async () => {
+    const out = await pushLead(CFG, new FormData(), respond(400, `a\n\tb${'x'.repeat(5000)}`));
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.reason.length).toBeLessThanOrEqual(200);
+      expect(/[\u0000-\u001f\u007f]/.test(out.reason)).toBe(false);
+    }
+  });
+});

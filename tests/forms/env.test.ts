@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readEnv, readFileEnv } from '../../src/lib/forms/env';
+import { readEnv, readFileEnv, crmConfig, DEFAULT_CRM_ENDPOINT } from '../../src/lib/forms/env';
 
 const full = {
   SUPABASE_URL: 'https://p.supabase.co',
@@ -91,6 +91,40 @@ describe('readEnv', () => {
     it('비활성화 상태에서 TURNSTILE_SECRET이 존재해도 무시하고 null로 만든다', () => {
       const env = readEnv({ ...full, TURNSTILE_ENABLED: 'false' });
       expect(env.turnstileSecret).toBeNull();
+    });
+  });
+});
+
+describe('CRM 설정', () => {
+  it('CRM_HOMEPAGE_SECRET이 없어도 readEnv는 성공하고 secret은 null이다', () => {
+    const env = readEnv(full);
+    expect(env.crmSecret).toBeNull();
+    expect(crmConfig(env)).toBeNull();
+  });
+
+  it('빈 문자열/공백도 없는 것으로 본다', () => {
+    expect(readEnv({ ...full, CRM_HOMEPAGE_SECRET: '   ' }).crmSecret).toBeNull();
+  });
+
+  it('시크릿이 있으면 CrmConfig를 만든다', () => {
+    const env = readEnv({ ...full, CRM_HOMEPAGE_SECRET: ' sh-1 ' });
+    expect(env.crmSecret).toBe('sh-1');
+    expect(crmConfig(env)).toEqual({ endpoint: DEFAULT_CRM_ENDPOINT, secret: 'sh-1' });
+  });
+
+  it('엔드포인트 기본값은 계약서의 운영 URL이다', () => {
+    expect(readEnv(full).crmEndpoint).toBe('https://crm.mrcha.app/api/homepage/lead');
+  });
+
+  it('CRM_ENDPOINT로 스테이징을 가리킬 수 있다', () => {
+    const env = readEnv({
+      ...full,
+      CRM_ENDPOINT: 'https://staging.crm.example/api/homepage/lead',
+      CRM_HOMEPAGE_SECRET: 'sh-1',
+    });
+    expect(crmConfig(env)).toEqual({
+      endpoint: 'https://staging.crm.example/api/homepage/lead',
+      secret: 'sh-1',
     });
   });
 });
