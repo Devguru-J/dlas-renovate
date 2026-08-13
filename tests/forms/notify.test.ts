@@ -11,7 +11,7 @@ function row(over: Partial<SubmissionRow> = {}): SubmissionRow {
     phone: '010-1234-5678',
     car: 'BMW 520i',
     methods: ['리스', '할부'],
-    pay_period: ['좋은 조건 즉시'],
+    pay_period: ['이번 달'],
     message: '견적 부탁드립니다',
     ref: 'naver',
     referer_page: '/lease/',
@@ -40,7 +40,7 @@ describe('buildEmail', () => {
   it('체크박스는 쉼표로 이어 붙인다', () => {
     const { html } = buildEmail(row(), []);
     expect(html).toContain('리스, 할부');
-    expect(html).toContain('좋은 조건 즉시');
+    expect(html).toContain('이번 달');
   });
 
   it('첨부 링크를 넣고 만료를 안내한다', () => {

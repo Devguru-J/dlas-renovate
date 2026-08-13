@@ -64,7 +64,7 @@ describe('validateText', () => {
       'your-phone': '010-1234-5678',
       'your-car': 'BMW 520i',
       'your-method[]': ['리스', '할부'],
-      'your-pay[]': ['좋은 조건 즉시'],
+      'your-pay[]': ['이번 달'],
       'your-message': '견적 부탁드립니다',
       dl_ref: 'naver',
       'referer-page': '/lease/',
@@ -77,7 +77,7 @@ describe('validateText', () => {
       phone: '010-1234-5678',
       car: 'BMW 520i',
       methods: ['리스', '할부'],
-      payPeriod: ['좋은 조건 즉시'],
+      payPeriod: ['이번 달'],
       message: '견적 부탁드립니다',
       ref: 'naver',
       refererPage: '/lease/',
@@ -102,7 +102,7 @@ describe('validateText', () => {
       'your-name': '홍길동',
       'your-phone': '010-1234-5678',
       'your-car': 'X',
-      'your-pay[]': ['좋은 조건 즉시'],
+      'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);
     expect(r.ok).toBe(false);
@@ -142,7 +142,7 @@ describe('validateText', () => {
       'your-phone': '010-1234-5678',
       'your-car': 'X',
       'your-method[]': ['리스', '<script>'],
-      'your-pay[]': ['좋은 조건 즉시'],
+      'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);
     expect(r.ok).toBe(false);
@@ -158,7 +158,7 @@ describe('validateText', () => {
       'your-phone': '전화주세요',
       'your-car': 'X',
       'your-method[]': ['리스'],
-      'your-pay[]': ['좋은 조건 즉시'],
+      'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);
     expect(r.ok).toBe(false);
@@ -174,7 +174,7 @@ describe('validateText', () => {
       'your-phone': '010-123',
       'your-car': 'X',
       'your-method[]': ['리스'],
-      'your-pay[]': ['좋은 조건 즉시'],
+      'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);
     expect(r.ok).toBe(false);
@@ -201,7 +201,7 @@ describe('validateText', () => {
       'your-phone': '010-1234-5678',
       'your-car': 'X',
       'your-method[]': ['리스'],
-      'your-pay[]': ['좋은 조건 즉시'],
+      'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);
     expect(r.ok).toBe(false);
@@ -215,7 +215,7 @@ describe('validateText', () => {
       'your-phone': '010-1234-5678',
       'your-car': 'X',
       'your-method[]': ['리스'],
-      'your-pay[]': ['좋은 조건 즉시'],
+      'your-pay[]': ['이번 달'],
     });
     const r = validateText(newCar, get, getAll);
     expect(r.ok).toBe(true);

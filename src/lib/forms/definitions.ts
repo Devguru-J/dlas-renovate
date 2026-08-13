@@ -61,7 +61,7 @@ export interface FormDefinition {
 }
 
 const PURCHASE_METHODS = ['리스', '장기렌트', '할부', '현금'];
-const PURCHASE_TIMING = ['좋은 조건 즉시', '이번달 구매 예정', '다음달 계획 중', '3개월 이상 예정'];
+const PURCHASE_TIMING = ['이번 달', '다음 달', '3개월 이내', '미정'];
 
 const TOO_LONG = '내용이 너무 깁니다.';
 const NOT_ENUM = '이 입력란을 통해 정의되지 않은 값이 제출되었습니다.';
