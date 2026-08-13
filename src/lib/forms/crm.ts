@@ -112,8 +112,18 @@ export function buildCrmForm(row: SubmissionRow, attachments: CrmAttachment[]): 
   return form;
 }
 
-/** 제어문자를 지우고 길이를 잘라, 로그·DB에 넣어도 안전한 발췌를 만든다. */
-function excerpt(text: string): string {
+/**
+ * 시크릿을 지우고, 제어문자를 없애고, 길이를 잘라 로그·DB에 넣어도 안전한 발췌를 만든다.
+ *
+ * **문자열을 자르는 곳은 이 함수뿐이고, 이 함수는 시크릿 없이는 부를 수 없다.**
+ * 순서가 중요하다: 마스킹 → 제어문자 제거 → 길이 제한. 거꾸로 자르고 나서 마스킹하면
+ * 자르는 경계에 걸친 시크릿이 두 조각으로 갈려 어느 쪽도 전체와 일치하지 않고,
+ * 앞 조각이 그대로 살아남는다. 자르기만 하는 함수를 따로 두면 그것을 마스킹 전에 부르는
+ * 실수가 언제든 되살아나므로, 두 일을 한 함수에 묶어 둔다.
+ * 호출부는 가공하지 않은 원문을 그대로 넘기면 된다.
+ */
+function safeDetail(raw: string, secret: string): string {
+  const text = redactSecret(raw, secret);
   const flat = text.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
   if (flat.length <= MAX_EXCERPT) return flat;
   return `${flat.slice(0, MAX_EXCERPT)}…`;
@@ -128,11 +138,12 @@ function redactSecret(text: string, secret: string): string {
   return text.split(secret).join('***');
 }
 
+/** detail에는 가공하지 않은 원문을 넘긴다. 마스킹과 자르기는 여기서(safeDetail이) 책임진다. */
 function fail(status: number | null, detail: string, retryable: boolean, secret: string): CrmOutcome {
   const head = status === null ? 'network' : `status=${status}`;
   // 시크릿 마스킹과 길이 제한은 1차 방어선이 아니라 최후의 방어선이다.
   // 1차 방어는 애초에 기계 판독용 값만 detail에 담는 것이다(describeCrmError 참고).
-  const body = redactSecret(detail, secret);
+  const body = safeDetail(detail, secret);
   const reason = body === '' ? head : `${head} ${body}`;
   return {
     ok: false,
@@ -214,7 +225,8 @@ export async function pushLead(
     // 네트워크 오류는 CRM이 받았는지조차 모른다. submissionId가 멱등키라 재시도해도 안전하다.
     // 이 메시지는 상대측 본문이 아니라 우리 런타임이 만든 문자열이라("fetch failed" 등)
     // 고객 입력을 되비출 경로가 없다. 그래서 여기서만 문구를 남긴다.
-    const msg = err instanceof Error ? excerpt(err.message) : '';
+    // 원문 그대로 넘긴다 — 여기서 미리 자르면 마스킹이 자른 뒤에 돌아 경계에 걸친 시크릿이 새어나간다.
+    const msg = err instanceof Error ? err.message : '';
     return fail(null, msg, true, cfg.secret);
   }
 

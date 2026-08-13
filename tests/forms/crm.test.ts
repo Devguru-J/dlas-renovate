@@ -289,6 +289,29 @@ describe('pushLead 실패 사유의 안전성', () => {
     }
   });
 
+  it('시크릿이 자르는 경계에 걸쳐도 조각조차 남기지 않는다', async () => {
+    // 자른 뒤에 마스킹하면 경계에 걸친 시크릿이 두 조각으로 갈리고,
+    // 어느 조각도 전체와 일치하지 않아 앞 조각이 그대로 사유에 남는다.
+    const secret = 'sk-live-0123456789abcdef0123456789abcdef';
+    const cfg = { endpoint: CFG.endpoint, secret };
+    // 시크릿(40자)이 발췌 상한(120자)에 걸치도록 앞을 정확히 100자로 채운다.
+    // 앞 20자는 자르는 선 안쪽, 뒤 20자는 바깥쪽에 놓인다.
+    const prefix = 'connect failed ';
+    const fake: typeof fetch = async () => {
+      throw new Error(`${prefix}${'x'.repeat(100 - prefix.length)}${secret} trailing`);
+    };
+
+    const out = await pushLead(cfg, new FormData(), fake);
+
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.reason).not.toContain(secret);
+      for (let i = 0; i + 16 <= secret.length; i += 1) {
+        expect(out.reason).not.toContain(secret.slice(i, i + 16));
+      }
+    }
+  });
+
   it('네트워크 오류 메시지에 시크릿이 섞여도 남기지 않는다', async () => {
     const fake: typeof fetch = async () => {
       throw new Error(`connect failed with sh-secret-42`);
