@@ -33,9 +33,10 @@
     }
   }
 
-  // CF7은 모든 제출 결과에 wpcf7submit을 발생시키고, 성공한 경우에만 폼을 리셋한다.
+  // 폼을 리셋하는 것은 제출 성공(mail_sent)뿐이다. wpcf7submit은 검증 실패에도
+  // 발생하므로 그것으로 복구하면 입력해 둔 번호까지 지워진다 — 그래서 성공 이벤트만 듣는다.
   // 리셋은 이벤트 처리 이후에 일어나므로 다음 틱으로 미뤄서 복구한다.
-  document.addEventListener('wpcf7submit', function (e) {
+  document.addEventListener('wpcf7mailsent', function (e) {
     var form = e.target;
     setTimeout(function () { restore(form); }, 0);
   }, false);

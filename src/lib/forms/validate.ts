@@ -21,11 +21,28 @@ export function normalizePhone(raw: string): string {
   return trimmed;
 }
 
-/** CF7 wpcf7_is_tel()과 같은 판정: 허용 문자만 쓰였고 숫자가 하나 이상 있어야 한다 */
+/**
+ * CF7 6.0.6 wpcf7_is_tel()의 이식.
+ * 정본은 원본 서버의 wp-content/plugins/contact-form-7/includes/validation-functions.php 이며,
+ * 아래 순서와 문자 집합은 그 PHP 코드를 그대로 옮긴 것이다.
+ *   1) # 또는 * 뒤(내선번호)를 잘라낸다
+ *   2) 구분 문자 ()/.*#공백- 를 모두 제거한다
+ *   3) + 또는 00으로 시작하면 국제번호로 보고 앞의 +/0을 하나의 +로 바꾼다
+ *   4) 남은 값이 [+]숫자 형태여야 하고, 길이가 6~15자여야 한다
+ * 원본 서버에 이 함수를 바꾸는 필터는 없다(wpcf7_is_tel 훅 사용처 없음).
+ */
 export function isValidTel(raw: string): boolean {
-  const t = raw.trim();
-  if (!/\d/.test(t)) return false;
-  return /^[+]?[0-9()/.\- ]+$/.test(t);
+  // PHP의 `.`는 줄바꿈에 걸리지 않으므로 JS에서도 줄바꿈은 제외한다.
+  let text = raw.replace(/[#*][^\n]*$/, '');
+  // PHP의 \s는 [ \t\n\r\f\v]다. JS의 \s는 유니코드 공백까지 포함하므로 직접 나열한다.
+  text = text.replace(/[()/.*#\t\n\r\f\v -]+/g, '');
+
+  if (text.startsWith('+') || text.startsWith('00')) {
+    text = `+${text.replace(/^[+0]+/, '')}`;
+  }
+
+  if (!/^[+]?[0-9]+$/.test(text)) return false;
+  return text.length > 5 && text.length < 16;
 }
 
 export interface TextResult {

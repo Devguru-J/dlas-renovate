@@ -23,11 +23,14 @@ describe('normalizePhone', () => {
   });
 });
 
+// 기대값은 원본(dlas.co.kr)의 584 폼에 같은 값을 POST해 받은 응답으로 확인한 것이다.
 describe('isValidTel', () => {
   it('CF7 wpcf7_is_tel과 같은 문자만 허용한다', () => {
     expect(isValidTel('010-1234-5678')).toBe(true);
     expect(isValidTel('+82 (10) 1234.5678')).toBe(true);
     expect(isValidTel('02/123/4567')).toBe(true);
+    expect(isValidTel('070-1234-5678')).toBe(true);
+    expect(isValidTel('010 1234 5678')).toBe(true);
   });
 
   it('숫자가 하나도 없으면 거부한다', () => {
@@ -38,6 +41,25 @@ describe('isValidTel', () => {
   it('한글이나 알파벳이 섞이면 거부한다', () => {
     expect(isValidTel('전화주세요')).toBe(false);
     expect(isValidTel('010-1234-5678 내선')).toBe(false);
+  });
+
+  it('구분 문자를 뗀 길이가 6~15자여야 한다', () => {
+    expect(isValidTel('010-1')).toBe(false); // 4자
+    expect(isValidTel('02-123')).toBe(false); // 5자
+    expect(isValidTel('02-1234')).toBe(true); // 6자
+    expect(isValidTel('0'.repeat(1) + '1'.repeat(15))).toBe(false); // 16자
+  });
+
+  it('# 또는 * 뒤는 내선번호로 보고 잘라낸다', () => {
+    expect(isValidTel('010-1234-5678#123')).toBe(true);
+    expect(isValidTel('010-1#99')).toBe(false); // 내선을 뗀 본번이 짧다
+  });
+
+  it('+ 또는 00으로 시작하면 국제번호로 취급한다', () => {
+    expect(isValidTel('+8210-1234-5678')).toBe(true);
+    // 앞의 0들이 하나의 +로 접히므로 0만 늘어놓은 값은 통과하지 못한다
+    expect(isValidTel('0000000000000')).toBe(false);
+    expect(isValidTel('0000-0000-0000')).toBe(false);
   });
 });
 
@@ -187,7 +209,7 @@ describe('validateText', () => {
   it('detailing은 최소 길이 제한이 없다', () => {
     const { get, getAll } = makeGetters({
       'your-name': '홍길동',
-      'your-telephone': '02-123',
+      'your-telephone': '02-123-4567',
       'your-car': 'X',
       'your-method[]': ['디테일링'],
       'your-pay[]': ['미정'],

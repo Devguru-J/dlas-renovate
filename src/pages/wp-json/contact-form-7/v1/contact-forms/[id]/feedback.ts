@@ -1,6 +1,8 @@
 import type { APIRoute } from 'astro';
 import { env as cfEnv } from 'cloudflare:workers';
-import { findForm, type StatusMessages } from '../../../../../../lib/forms/definitions';
+import {
+  findForm, orderInvalidFields, type StatusMessages,
+} from '../../../../../../lib/forms/definitions';
 import { validateText } from '../../../../../../lib/forms/validate';
 import {
   MAX_FILE_BYTES, MAX_FILES, detectFileType, sanitizeFilename, r2Key,
@@ -22,18 +24,20 @@ export const prerender = false;
 export const POST: APIRoute = async ({ request, params, locals }) => {
   // 폼이 아직 식별되지 않았을 때 예외가 나면 이 기본값으로 응답한다.
   let unitTag = 'unknown';
+  let cf7Id = params.id ?? '';
   let msg: StatusMessages = FALLBACK_MESSAGES;
 
   try {
-    return await handleFeedback({ request, params, locals }, (tag, m) => {
+    return await handleFeedback({ request, params, locals }, (tag, id, m) => {
       unitTag = tag;
+      cf7Id = id;
       msg = m;
     });
   } catch (err) {
     // 여기까지 새어나온 예외는 설정 누락 등 예측하지 못한 실패다.
     // 4xx/5xx를 내면 CF7 클라이언트가 아무 메시지도 보여주지 않으므로 200으로 응답한다.
     console.error('unhandled error in feedback endpoint', err);
-    return cf7Response(unitTag, 'mail_failed', msg.mail_failed);
+    return cf7Response(unitTag, cf7Id, 'mail_failed', msg.mail_failed);
   }
 };
 
@@ -43,7 +47,7 @@ async function handleFeedback(
     params,
     locals,
   }: { request: Request; params: Partial<Record<string, string>>; locals: unknown },
-  onFormIdentified: (unitTag: string, msg: StatusMessages) => void,
+  onFormIdentified: (unitTag: string, cf7Id: string, msg: StatusMessages) => void,
 ): Promise<Response> {
   const env = readEnv(cfEnv as unknown as Record<string, unknown>);
 
@@ -51,7 +55,7 @@ async function handleFeedback(
   try {
     form = await request.formData();
   } catch {
-    return cf7Response('unknown', 'spam', FALLBACK_MESSAGES.spam);
+    return cf7Response('unknown', params.id ?? '', 'spam', FALLBACK_MESSAGES.spam);
   }
 
   const str = (name: string): string | null => {
@@ -66,12 +70,17 @@ async function handleFeedback(
   const containerPost = str('_wpcf7_container_post') ?? '';
   const def = findForm(cf7Id, containerPost);
   if (!def || def.cf7Id !== params.id) {
-    return cf7Response(str('_wpcf7_unit_tag') ?? 'unknown', 'spam', FALLBACK_MESSAGES.spam);
+    return cf7Response(
+      str('_wpcf7_unit_tag') ?? 'unknown',
+      params.id ?? '',
+      'spam',
+      FALLBACK_MESSAGES.spam,
+    );
   }
   const unitTag = def.unitTag;
   const msg = def.statusMessages;
   // 폼이 식별된 뒤부터는 바깥 catch도 이 폼의 문구를 쓸 수 있게 알려준다.
-  onFormIdentified(unitTag, msg);
+  onFormIdentified(unitTag, def.cf7Id, msg);
 
   const ip = request.headers.get('cf-connecting-ip');
 
@@ -83,14 +92,28 @@ async function handleFeedback(
   const secret = env.turnstileSecret;
   if (secret) {
     const passed = await verifyTurnstile(secret, str('cf-turnstile-response'), ip);
-    if (!passed) return cf7Response(unitTag, 'spam', msg.spam);
+    if (!passed) return cf7Response(unitTag, def.cf7Id, 'spam', msg.spam);
   }
 
-  // 3. 텍스트 검증
+  // 3. 텍스트 검증.
+  //
+  // 원본은 텍스트 검증을 통과한 뒤에야 업로드 파일을 검사한다(WPCF7_Submission이
+  // validate() 실패 시 곧바로 반환하고, unship_uploaded_files()는 그 뒤에 돈다).
+  // 그래서 이름이 비어 있으면 첨부가 없어도 file-71 에러는 나오지 않는다.
+  // 원본 응답과 어긋나지 않도록 같은 순서로 처리한다.
   const text = validateText(def, str, strAll);
-  const invalid = text.ok ? [] : [...text.invalid];
+  if (!text.ok) {
+    return cf7Response(
+      unitTag,
+      def.cf7Id,
+      'validation_failed',
+      msg.validation_failed,
+      orderInvalidFields(def, [...text.invalid]),
+    );
+  }
 
   // 4. 파일 검증
+  const invalid: { field: string; message: string }[] = [];
   const submissionId = crypto.randomUUID();
   const now = new Date();
   const pending: { n: number; meta: AttachmentMeta; body: ArrayBuffer }[] = [];
@@ -135,10 +158,13 @@ async function handleFeedback(
   }
 
   if (invalid.length > 0) {
-    return cf7Response(unitTag, 'validation_failed', msg.validation_failed, invalid);
-  }
-  if (!text.ok) {
-    return cf7Response(unitTag, 'validation_failed', msg.validation_failed, text.invalid);
+    return cf7Response(
+      unitTag,
+      def.cf7Id,
+      'validation_failed',
+      msg.validation_failed,
+      orderInvalidFields(def, invalid),
+    );
   }
 
   // 5. R2 먼저, DB 나중. 반대면 파일 없는 레코드가 생긴다.
@@ -151,7 +177,7 @@ async function handleFeedback(
     }
   } catch (err) {
     console.error('r2 put failed', err);
-    return cf7Response(unitTag, 'mail_failed', msg.mail_failed);
+    return cf7Response(unitTag, def.cf7Id, 'mail_failed', msg.mail_failed);
   }
 
   const row: SubmissionRow = {
@@ -207,7 +233,7 @@ ${fileNote}</div>`;
     } catch (mailErr) {
       console.error('db failure notification email failed', mailErr);
     }
-    return cf7Response(unitTag, 'mail_failed', msg.mail_failed);
+    return cf7Response(unitTag, def.cf7Id, 'mail_failed', msg.mail_failed);
   }
 
   // 6. 이메일. insertSubmission이 성공한 뒤부터는 이 블록 안에서 무엇이 실패해도
@@ -285,5 +311,5 @@ ${fileNote}</div>`;
     console.error('crm 전송 배선 실패', err);
   }
 
-  return cf7Response(unitTag, 'mail_sent', msg.mail_sent);
+  return cf7Response(unitTag, def.cf7Id, 'mail_sent', msg.mail_sent);
 }

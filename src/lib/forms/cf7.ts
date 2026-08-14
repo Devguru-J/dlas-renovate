@@ -15,20 +15,31 @@ export const FALLBACK_MESSAGES: Record<Cf7Status, string> = {
  * CF7 6.0.6 클라이언트는 응답의 status, message, invalid_fields만 본다.
  * HTTP 상태는 항상 200이어야 한다. 4xx/5xx면 클라이언트가 fetch 자체를 실패로 처리해
  * 사용자에게 아무 메시지도 보여주지 않는다.
+ *
+ * 키 구성과 순서는 원본(dlas.co.kr)의 실제 응답을 그대로 옮긴 것이다.
+ * contact_form_id·idref·error_id는 6.0.6 클라이언트가 읽지 않지만, 원본과 응답이
+ * 다를 이유가 없어 같이 싣는다.
  */
 export function cf7Response(
   unitTag: string,
+  cf7Id: string,
   status: Cf7Status,
   message: string,
   invalidFields: { field: string; message: string }[] = [],
 ): Response {
   return new Response(
     JSON.stringify({
-      into: `#${unitTag}`,
+      contact_form_id: Number.parseInt(cf7Id, 10) || 0,
       status,
       message,
+      invalid_fields: invalidFields.map((f) => ({
+        field: f.field,
+        message: f.message,
+        idref: null,
+        error_id: `${unitTag}-ve-${f.field}`,
+      })),
       posted_data_hash: '',
-      invalid_fields: invalidFields,
+      into: `#${unitTag}`,
     }),
     { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } },
   );

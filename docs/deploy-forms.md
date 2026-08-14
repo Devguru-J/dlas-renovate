@@ -302,6 +302,32 @@ curl http://localhost:8787/cdn-cgi/handler/scheduled
    연동을 잠시 끄고 싶으면 이 시크릿을 지우면 된다 — 그동안 들어온 리드는
    시도 횟수가 늘지 않은 채 남아 있다가, 시크릿을 다시 넣으면 크론이 한 번에 따라잡는다.
 
+## 10.6. CF7 엔드포인트는 두 개다 — feedback과 refill
+
+미러는 CF7 6.0.6 클라이언트를 그대로 쓰므로 **원본이 제공하던 REST 경로를 모두**
+갖고 있어야 한다. 하나라도 빠지면 화면이 조용히 멈춘다.
+
+| 경로 | 구현 | 없으면 |
+|---|---|---|
+| `POST /wp-json/contact-form-7/v1/contact-forms/{id}/feedback` | `src/pages/wp-json/.../feedback.ts` | 제출 자체가 실패 |
+| `GET  /wp-json/contact-form-7/v1/contact-forms/{id}/refill` | `public/wp-json/.../{id}/refill` (원본과 같은 `[]`) | **제출 성공 문구가 영영 안 뜬다** |
+| `GET  /wp-json/contact-form-7/v1/contact-forms/{id}/feedback/schema` | `public/wp-json/.../schema` (스냅샷) | 클라이언트 유효성 검사가 죽는다 |
+
+refill이 왜 성공 문구를 좌우하는가: CF7은 `mail_sent`를 받으면 `form.reset()`을 부르고,
+그 리셋 핸들러가 refill을 GET 하면서 폼 상태를 `resetting`으로 바꾼다. 상태를 다시
+`mail_sent`로 되돌리는 것은 **refill 응답이 돌아온 뒤**다. 404가 나면 폼은 `resetting`에
+갇히고, CSS `.wpcf7 form.resetting .wpcf7-response-output { display:none }` 때문에
+초록 알림이 화면에 나타나지 않는다(문구는 DOM에 들어 있는데 감춰진 상태).
+
+응답 본문도 원본과 같은 형태여야 한다. `contact_form_id`·`invalid_fields[].idref`·
+`error_id`는 6.0.6 클라이언트가 읽지 않지만 원본이 싣는 값이라 같이 싣고,
+`invalid_fields`의 순서는 SWV 스키마 규칙 순서를 따른다(`errorFieldOrder`).
+원본은 **텍스트 검증을 통과한 뒤에야** 첨부를 검사하므로(이름이 비면 file 에러가
+같이 나오지 않는다) 엔드포인트도 같은 순서로 처리한다.
+
+전화번호 판정(`isValidTel`)은 원본 서버의 `wpcf7_is_tel()`을 그대로 옮긴 것이다.
+구분 문자를 뗀 뒤 6~15자, `+`나 `00`으로 시작하면 국제번호로 접는다. 손대지 말 것.
+
 ## 11. 사전 런칭 체크리스트
 
 - [ ] 마이그레이션 적용 여부를 확인했다 (§1)

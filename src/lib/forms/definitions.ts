@@ -56,6 +56,11 @@ export interface FormDefinition {
   refField: 'dl_ref' | 'it_ref';
   /** 첨부 파일 필드. 없으면 빈 배열 */
   fileFields: string[];
+  /**
+   * invalid_fields를 내보내는 순서. 원본은 SWV 스키마의 규칙 순서대로 쌓으므로
+   * 그 순서를 그대로 옮겨 적었다(정본은 public/wp-json/.../feedback/schema).
+   */
+  errorFieldOrder: string[];
   messages: FormMessages;
   statusMessages: StatusMessages;
 }
@@ -97,6 +102,7 @@ export const FORMS: readonly FormDefinition[] = [
     payValues: [],
     refField: 'dl_ref',
     fileFields: ['file-71', 'file-72'],
+    errorFieldOrder: ['file-71', 'file-72', 'your-name', 'your-phone', 'your-message'],
     messages: {
       required: '성함, 연락처, 최소 1개의 견적서 파일첨부 부탁드립니다.',
       tooLong: TOO_LONG,
@@ -127,6 +133,9 @@ export const FORMS: readonly FormDefinition[] = [
     payValues: PURCHASE_TIMING,
     refField: 'dl_ref',
     fileFields: [],
+    errorFieldOrder: [
+      'your-method', 'your-pay', 'your-name', 'your-phone', 'your-car', 'your-message',
+    ],
     messages: CONSULTING_MESSAGES,
     statusMessages: {
       mail_sent: CONSULTING_SENT,
@@ -148,6 +157,9 @@ export const FORMS: readonly FormDefinition[] = [
     payValues: PURCHASE_TIMING,
     refField: 'dl_ref',
     fileFields: [],
+    errorFieldOrder: [
+      'your-method', 'your-pay', 'your-name', 'your-phone', 'your-car', 'your-message',
+    ],
     messages: CONSULTING_MESSAGES,
     statusMessages: {
       mail_sent: CONSULTING_SENT,
@@ -169,6 +181,9 @@ export const FORMS: readonly FormDefinition[] = [
     payValues: ['예약가능즉시', '1주일 이내', '1개월 이내', '미정'],
     refField: 'it_ref',
     fileFields: [],
+    errorFieldOrder: [
+      'your-method', 'your-pay', 'your-name', 'your-telephone', 'your-car', 'your-message',
+    ],
     messages: CONSULTING_MESSAGES,
     statusMessages: {
       mail_sent: CONSULTING_SENT,
@@ -179,6 +194,23 @@ export const FORMS: readonly FormDefinition[] = [
     },
   },
 ];
+
+/**
+ * invalid_fields를 원본과 같은 순서로 정렬한다. 목록에 없는 이름은 뒤에 원래 순서대로 남긴다.
+ */
+export function orderInvalidFields<T extends { field: string }>(
+  def: FormDefinition,
+  fields: T[],
+): T[] {
+  const rank = (name: string) => {
+    const i = def.errorFieldOrder.indexOf(name);
+    return i === -1 ? def.errorFieldOrder.length : i;
+  };
+  return fields
+    .map((f, i) => ({ f, i }))
+    .sort((a, b) => rank(a.f.field) - rank(b.f.field) || a.i - b.i)
+    .map((x) => x.f);
+}
 
 /**
  * 폼 583이 신차·중고차 두 페이지에 공유되므로 _wpcf7 하나로는 판정할 수 없다.
