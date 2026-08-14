@@ -13,17 +13,19 @@ import {
 } from '../../../../../../lib/forms/db';
 import { buildEmail, sendEmail, escapeHtml } from '../../../../../../lib/forms/notify';
 import { verifyTurnstile } from '../../../../../../lib/forms/turnstile';
-import { readEnv } from '../../../../../../lib/forms/env';
+import { readEnv, crmConfig } from '../../../../../../lib/forms/env';
+import { syncLeadNow } from '../../../../../../lib/forms/crm-retry';
+import { waitUntilCtx } from '../../../../../../lib/forms/runtime';
 
 export const prerender = false;
 
-export const POST: APIRoute = async ({ request, params }) => {
+export const POST: APIRoute = async ({ request, params, locals }) => {
   // 폼이 아직 식별되지 않았을 때 예외가 나면 이 기본값으로 응답한다.
   let unitTag = 'unknown';
   let msg: StatusMessages = FALLBACK_MESSAGES;
 
   try {
-    return await handleFeedback({ request, params }, (tag, m) => {
+    return await handleFeedback({ request, params, locals }, (tag, m) => {
       unitTag = tag;
       msg = m;
     });
@@ -36,7 +38,11 @@ export const POST: APIRoute = async ({ request, params }) => {
 };
 
 async function handleFeedback(
-  { request, params }: { request: Request; params: Partial<Record<string, string>> },
+  {
+    request,
+    params,
+    locals,
+  }: { request: Request; params: Partial<Record<string, string>>; locals: unknown },
   onFormIdentified: (unitTag: string, msg: StatusMessages) => void,
 ): Promise<Response> {
   const env = readEnv(cfEnv as unknown as Record<string, unknown>);
@@ -239,6 +245,44 @@ ${fileNote}</div>`;
       email_sent_at: null,
       email_error: String(err).slice(0, 500),
     });
+  }
+
+  // 7. 차선생 CRM 전송. 계약 정본은 docs/crm-lead-integration.md 다.
+  //
+  // 시크릿이 없으면 crmConfig가 null을 주고, 그러면 시도조차 하지 않는다 — 상대측
+  // 엔드포인트가 배포되기 전에는 이것이 곧 꺼짐 스위치다(재시도 예산도 소모되지 않는다).
+  //
+  // 응답을 붙잡지 않는다. CRM이 느리다고 고객이 기다릴 이유가 없고, 여기서 놓친 건은
+  // 크론(src/worker.ts)이 같은 submissionId로 이어받는다. 첨부는 방금 R2에 올린
+  // 바이트가 아직 메모리에 있으므로 다시 내려받지 않고 그대로 넘긴다.
+  //
+  // 이 블록 전체를 try로 감싼다. 여기서 무엇이 터지든 이미 저장된 리드를 실패로
+  // 보고할 수는 없다. 이메일 블록과 같은 규율이다.
+  try {
+    const crm = crmConfig(env);
+    if (crm) {
+      // 워커에서는 응답 후에 마저 돌리고, ctx가 없는 환경에서는 기다린다.
+      const ctx = waitUntilCtx(locals);
+      const task = syncLeadNow(
+        {
+          supabase,
+          crm,
+          mail: { apiKey: env.resendApiKey, from: env.notifyFrom, to: env.notifyTo },
+        },
+        row,
+        pending.map((p) => ({
+          n: p.n,
+          filename: p.meta.filename,
+          contentType: p.meta.content_type,
+          body: p.body,
+        })),
+      );
+
+      if (ctx) ctx.waitUntil(task);
+      else await task;
+    }
+  } catch (err) {
+    console.error('crm 전송 배선 실패', err);
   }
 
   return cf7Response(unitTag, 'mail_sent', msg.mail_sent);
