@@ -1,6 +1,10 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "dlas",
+  // 이 계정에 로그인된 계정이 둘이라, 없으면 wrangler 명령마다
+  // "More than one account available"로 멈춘다(비대화형에서는 아예 실패한다).
+  // 계정 ID는 비밀값이 아니다.
+  "account_id": "08a401b4406beae7e53b9a14d0d01d61",
   // 어댑터 기본 엔트리(@astrojs/cloudflare/entrypoints/server) 대신 우리 파일을 쓴다.
   // Cron 트리거는 scheduled 핸들러를 export하는 엔트리를 요구하는데 어댑터 엔트리는
   // fetch만 내보내기 때문이다. src/worker.ts는 그 fetch를 그대로 재수출하고
