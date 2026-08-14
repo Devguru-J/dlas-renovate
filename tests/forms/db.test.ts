@@ -279,6 +279,22 @@ describe('fetchPendingCrmLeads', () => {
     expect(rows[0].id).toBe('11111111-2222-3333-4444-555555555555');
   });
 
+  // 크론은 updateCrmStatus에 crm_attempts를 "현재값 + 1"로 써야 하는데,
+  // 현재값을 이 조회 말고는 알 방법이 없다. select에서 빠지면 크론이 카운터를
+  // 매번 1로 덮어써 상한이 영영 오지 않는다.
+  it('crm_attempts를 함께 조회해 돌려준다', async () => {
+    let seen = '';
+    const fake: typeof fetch = async (url) => {
+      seen = String(url);
+      return new Response(JSON.stringify([{ ...row(), crm_attempts: 3 }]), { status: 200 });
+    };
+
+    const rows = await fetchPendingCrmLeads(CFG, 5, fake);
+
+    expect(new URL(seen).searchParams.get('select')).toContain('crm_attempts');
+    expect(rows[0].crm_attempts).toBe(3);
+  });
+
   it('실패 응답이면 본문 없이 상태코드만 담은 에러를 던진다', async () => {
     const fake: typeof fetch = async () =>
       new Response(JSON.stringify({ code: '42703', details: 'Failing row contains (홍길동)' }), {

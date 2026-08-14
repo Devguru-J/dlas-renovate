@@ -185,7 +185,19 @@ const SUBMISSION_COLUMNS = [
   'email_error',
   'ip_hash',
   'user_agent',
+  // 크론이 updateCrmStatus에 넣을 다음 시도 횟수를 현재값에서 계산한다.
+  // 이 컬럼이 빠지면 매번 1로 덮어써서 상한(CRM_MAX_ATTEMPTS)에 영영 닿지 않는다.
+  'crm_attempts',
 ].join(',');
+
+/**
+ * 재전송 대기 중인 리드. SubmissionRow에 현재 시도 횟수를 더한 것이다.
+ * SubmissionRow 자체에 넣지 않는 이유는 제출 시점(insertSubmission)에는
+ * 존재하지 않는 값이기 때문이다 — 그 경로에서 이 필드를 요구하면 안 된다.
+ */
+export interface PendingCrmLead extends SubmissionRow {
+  crm_attempts: number;
+}
 
 /**
  * 아직 CRM에 못 보낸 리드를 오래된 순으로 가져온다.
@@ -198,7 +210,7 @@ export async function fetchPendingCrmLeads(
   limit: number,
   fetchImpl: typeof fetch = fetch,
   now: Date = new Date(),
-): Promise<SubmissionRow[]> {
+): Promise<PendingCrmLead[]> {
   const base = cfg.url.replace(/\/+$/, '');
   const cutoff = new Date(now.getTime() - CRM_RETRY_SPACING_MS).toISOString();
   const params = new URLSearchParams();
@@ -223,7 +235,7 @@ export async function fetchPendingCrmLeads(
   if (!res.ok) {
     throw new Error(`supabase select failed: ${await describeError(res)}`);
   }
-  return (await res.json()) as SubmissionRow[];
+  return (await res.json()) as PendingCrmLead[];
 }
 
 export async function fetchAttachments(
