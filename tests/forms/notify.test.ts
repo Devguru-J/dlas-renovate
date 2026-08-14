@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { buildEmail, escapeHtml, sendEmail } from '../../src/lib/forms/notify';
+import {
+  buildCrmAlertEmail,
+  buildEmail,
+  escapeHtml,
+  sendEmail,
+} from '../../src/lib/forms/notify';
 import type { SubmissionRow } from '../../src/lib/forms/db';
 
 function row(over: Partial<SubmissionRow> = {}): SubmissionRow {
@@ -98,5 +103,32 @@ describe('sendEmail', () => {
     await expect(
       sendEmail({ apiKey: 'k', from: 'f@x.com', to: ['t@x.com'] }, 's', 'h', fake),
     ).rejects.toThrow(/401.*bad key/);
+  });
+});
+
+describe('buildCrmAlertEmail', () => {
+  it('제목으로 CRM 전송 실패임을 알리고 어느 제출인지 식별한다', () => {
+    const { subject } = buildCrmAlertEmail(row(), { attempts: 8, error: 'status=400 code=bad_type' });
+    expect(subject).toContain('[CRM전송실패]');
+    expect(subject).toContain('신차 상담신청');
+    expect(subject).toContain('홍길동');
+  });
+
+  it('담당자가 수동 등록할 수 있도록 제출 ID와 시도 횟수, 실패 사유를 싣는다', () => {
+    const { html } = buildCrmAlertEmail(row(), { attempts: 8, error: 'status=401' });
+    expect(html).toContain('sub-1');
+    expect(html).toContain('8');
+    expect(html).toContain('status=401');
+  });
+
+  it('리드 자체는 남아 있다는 사실을 본문에 밝힌다', () => {
+    const { html } = buildCrmAlertEmail(row(), { attempts: 8, error: null });
+    expect(html).toContain('Supabase');
+  });
+
+  it('실패 사유에 섞인 HTML을 이스케이프한다', () => {
+    const { html } = buildCrmAlertEmail(row(), { attempts: 8, error: '<img src=x onerror=1>' });
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
   });
 });
