@@ -25,6 +25,7 @@ function lead(over: Partial<PendingCrmLead> = {}): PendingCrmLead {
     email_error: null,
     ip_hash: null,
     user_agent: null,
+    dedupe_key: 'deadbeef',
     crm_attempts: 0,
     ...over,
   };

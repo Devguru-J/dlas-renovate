@@ -30,6 +30,7 @@ function row(over: Partial<SubmissionRow> = {}): SubmissionRow {
     email_error: null,
     ip_hash: null,
     user_agent: null,
+    dedupe_key: 'deadbeef',
     ...over,
   };
 }

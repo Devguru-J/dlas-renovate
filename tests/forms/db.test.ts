@@ -31,6 +31,7 @@ function row(): SubmissionRow {
     email_error: null,
     ip_hash: 'abc',
     user_agent: 'test-agent',
+    dedupe_key: 'deadbeef',
   };
 }
 
@@ -55,13 +56,53 @@ describe('insertSubmission', () => {
 
   it('실패 응답이면 상태코드와 code만 담은 에러를 던진다', async () => {
     const fake: typeof fetch = async () =>
-      new Response(JSON.stringify({ code: '23505', message: 'duplicate key value' }), {
+      new Response(JSON.stringify({ code: '23503', message: 'insert violates foreign key' }), {
         status: 409,
         headers: { 'content-type': 'application/json' },
       });
 
-    await expect(insertSubmission(CFG, row(), fake)).rejects.toThrow(/status=409.*code=23505/);
-    await expect(insertSubmission(CFG, row(), fake)).rejects.not.toThrow(/duplicate key value/);
+    await expect(insertSubmission(CFG, row(), fake)).rejects.toThrow(/status=409.*code=23503/);
+    await expect(insertSubmission(CFG, row(), fake)).rejects.not.toThrow(/foreign key/);
+  });
+
+  it('성공하면 inserted를 돌려준다', async () => {
+    const fake: typeof fetch = async () => new Response('', { status: 201 });
+    expect(await insertSubmission(CFG, row(), fake)).toBe('inserted');
+  });
+
+  it('dedupe_key 중복(23505)은 실패가 아니라 duplicate로 돌려준다', async () => {
+    const fake: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          code: '23505',
+          message: 'duplicate key value violates unique constraint',
+          details: 'Key (dedupe_key)=(abc) already exists.',
+        }),
+        { status: 409, headers: { 'content-type': 'application/json' } },
+      );
+
+    expect(await insertSubmission(CFG, row(), fake)).toBe('duplicate');
+  });
+
+  it('dedupe_key 컬럼이 아직 없으면(PGRST204) 그 필드를 빼고 다시 넣는다', async () => {
+    const bodies: string[] = [];
+    const fake: typeof fetch = async (_url, init) => {
+      bodies.push(String((init as RequestInit).body));
+      if (bodies.length === 1) {
+        return new Response(
+          JSON.stringify({ code: 'PGRST204', message: "Could not find the 'dedupe_key' column" }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response('', { status: 201 });
+    };
+
+    expect(await insertSubmission(CFG, row(), fake)).toBe('inserted');
+    expect(bodies).toHaveLength(2);
+    expect(JSON.parse(bodies[0])).toHaveProperty('dedupe_key');
+    expect(JSON.parse(bodies[1])).not.toHaveProperty('dedupe_key');
+    // 문의 자체는 저장돼야 한다
+    expect(JSON.parse(bodies[1]).name).toBe('홍길동');
   });
 
   it('PostgREST 오류 본문의 고객 PII를 에러 메시지에 넣지 않는다', async () => {

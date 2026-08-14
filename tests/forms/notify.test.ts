@@ -26,6 +26,7 @@ function row(over: Partial<SubmissionRow> = {}): SubmissionRow {
     email_error: null,
     ip_hash: 'h',
     user_agent: 'ua',
+    dedupe_key: 'deadbeef',
     ...over,
   };
 }

@@ -13,6 +13,7 @@ import { cf7Response, FALLBACK_MESSAGES } from '../../../../../../lib/forms/cf7'
 import {
   insertSubmission, updateEmailStatus, type SubmissionRow,
 } from '../../../../../../lib/forms/db';
+import { dedupeKey } from '../../../../../../lib/forms/dedupe';
 import { buildEmail, sendEmail, escapeHtml } from '../../../../../../lib/forms/notify';
 import { verifyTurnstile } from '../../../../../../lib/forms/turnstile';
 import { readEnv, crmConfig } from '../../../../../../lib/forms/env';
@@ -198,11 +199,14 @@ async function handleFeedback(
     email_error: null,
     ip_hash: ip ? await hashIp(env.fileTokenSecret, ip) : null,
     user_agent: request.headers.get('user-agent'),
+    dedupe_key: '',
   };
+  row.dedupe_key = await dedupeKey(row, now);
 
   const supabase = { url: env.supabaseUrl, serviceRoleKey: env.supabaseServiceRoleKey };
+  let inserted: 'inserted' | 'duplicate';
   try {
-    await insertSubmission(supabase, row);
+    inserted = await insertSubmission(supabase, row);
   } catch (err) {
     console.error('supabase insert failed', err);
     // 저장에는 실패했지만 고객의 문의 자체는 잃지 않도록 담당자에게라도 알린다.
@@ -234,6 +238,23 @@ ${fileNote}</div>`;
       console.error('db failure notification email failed', mailErr);
     }
     return cf7Response(unitTag, def.cf7Id, 'mail_failed', msg.mail_failed);
+  }
+
+  // 5.5. 중복 제출. 전송 중 버튼을 연타하면 같은 내용이 거의 동시에 여러 번 도착하고,
+  // dedupe_key 유니크 인덱스가 두 번째부터를 막는다. 고객 입장에서는 문의가 접수된 것이
+  // 맞으므로 실패가 아니라 평소와 같은 성공 문구로 응답한다. 대신 알림 메일·CRM 전송은
+  // 하지 않는다 — 담당자에게 같은 리드를 두 번 보내지 않기 위해서다.
+  // 방금 R2에 올린 첨부는 가리키는 레코드가 없으니 지운다(안 지우면 보이지 않는 쓰레기가 된다).
+  if (inserted === 'duplicate') {
+    console.log('duplicate submission ignored', { form: def.key });
+    for (const p of pending) {
+      try {
+        await bucket.delete(p.meta.r2_key);
+      } catch (err) {
+        console.error('r2 delete failed for duplicate submission', err);
+      }
+    }
+    return cf7Response(unitTag, def.cf7Id, 'mail_sent', msg.mail_sent);
   }
 
   // 6. 이메일. insertSubmission이 성공한 뒤부터는 이 블록 안에서 무엇이 실패해도

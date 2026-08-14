@@ -20,6 +20,8 @@ export interface SubmissionRow {
   email_error: string | null;
   ip_hash: string | null;
   user_agent: string | null;
+  /** 중복 제출 차단용 해시(src/lib/forms/dedupe.ts). 유니크 인덱스가 걸려 있다. */
+  dedupe_key: string;
 }
 
 export interface SupabaseConfig {
@@ -49,26 +51,77 @@ async function describeError(res: Response): Promise<string> {
   return parts.join(' ');
 }
 
+/**
+ * 저장 결과. 'duplicate'는 같은 dedupe_key가 이미 있다는 뜻이다 —
+ * 실패가 아니라 "이미 접수된 건"이므로 호출부는 성공으로 응답해야 한다.
+ */
+export type InsertResult = 'inserted' | 'duplicate';
+
+/** Postgres의 unique_violation. PostgREST는 이 코드를 409와 함께 돌려준다. */
+const UNIQUE_VIOLATION = '23505';
+/** PostgREST가 "그런 컬럼 없음"에 쓰는 코드. 0003 마이그레이션 전이면 이게 온다. */
+const UNKNOWN_COLUMN = 'PGRST204';
+
 export async function insertSubmission(
   cfg: SupabaseConfig,
   row: SubmissionRow,
   fetchImpl: typeof fetch = fetch,
-): Promise<void> {
+): Promise<InsertResult> {
   const base = cfg.url.replace(/\/+$/, '');
-  const res = await fetchImpl(`${base}/rest/v1/contact_submissions`, {
-    method: 'POST',
-    headers: {
-      apikey: cfg.serviceRoleKey,
-      Authorization: `Bearer ${cfg.serviceRoleKey}`,
-      'Content-Type': 'application/json',
-      Prefer: 'return=minimal',
-    },
-    body: JSON.stringify(row),
-  });
+  const post = (body: unknown) =>
+    fetchImpl(`${base}/rest/v1/contact_submissions`, {
+      method: 'POST',
+      headers: {
+        apikey: cfg.serviceRoleKey,
+        Authorization: `Bearer ${cfg.serviceRoleKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify(body),
+    });
 
-  if (!res.ok) {
-    throw new Error(`supabase insert failed: ${await describeError(res)}`);
+  const res = await post(row);
+  if (res.ok) return 'inserted';
+
+  // 본문은 한 번만 읽을 수 있으므로 요약을 만들면서 code까지 같이 받는다.
+  const { summary, code } = await describeInsertError(res);
+  if (code === UNIQUE_VIOLATION) return 'duplicate';
+
+  // 0003 마이그레이션이 아직 적용되지 않은 상태. 여기서 던지면 고객의 문의가
+  // 통째로 실패하므로, 중복 방지를 포기하고서라도 저장은 되게 한다.
+  // 대신 로그로 크게 남긴다 — 이 상태로 오래 두면 연타 중복이 다시 들어온다.
+  if (code === UNKNOWN_COLUMN) {
+    console.error(
+      'contact_submissions.dedupe_key 컬럼이 없다. supabase/migrations/0003_dedupe_key.sql을 ' +
+        '적용할 때까지 중복 제출 차단이 꺼진 채로 저장한다.',
+      summary,
+    );
+    const { dedupe_key: _omitted, ...withoutKey } = row;
+    const retry = await post(withoutKey);
+    if (retry.ok) return 'inserted';
+    throw new Error(`supabase insert failed: ${(await describeInsertError(retry)).summary}`);
   }
+
+  throw new Error(`supabase insert failed: ${summary}`);
+}
+
+async function describeInsertError(res: Response): Promise<{ summary: string; code: string }> {
+  const parts = [`status=${res.status}`];
+  let code = '';
+  try {
+    const body: unknown = await res.json();
+    if (body !== null && typeof body === 'object') {
+      const obj = body as Record<string, unknown>;
+      if (typeof obj.code === 'string' && obj.code !== '') {
+        code = obj.code;
+        parts.push(`code=${obj.code}`);
+      }
+      if (typeof obj.hint === 'string' && obj.hint !== '') parts.push(`hint=${obj.hint}`);
+    }
+  } catch {
+    // describeError와 같은 이유로 원문은 어떤 경우에도 남기지 않는다.
+  }
+  return { summary: parts.join(' '), code };
 }
 
 /**
@@ -185,6 +238,7 @@ const SUBMISSION_COLUMNS = [
   'email_error',
   'ip_hash',
   'user_agent',
+  'dedupe_key',
   // 크론이 updateCrmStatus에 넣을 다음 시도 횟수를 현재값에서 계산한다.
   // 이 컬럼이 빠지면 매번 1로 덮어써서 상한(CRM_MAX_ATTEMPTS)에 영영 닿지 않는다.
   'crm_attempts',
