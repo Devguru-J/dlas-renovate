@@ -1,7 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "dlas",
-  "main": "@astrojs/cloudflare/entrypoints/server",
+  // 어댑터 기본 엔트리(@astrojs/cloudflare/entrypoints/server) 대신 우리 파일을 쓴다.
+  // Cron 트리거는 scheduled 핸들러를 export하는 엔트리를 요구하는데 어댑터 엔트리는
+  // fetch만 내보내기 때문이다. src/worker.ts는 그 fetch를 그대로 재수출하고
+  // scheduled만 얹는다.
+  "main": "src/worker.ts",
   // 설치된 workerd 바이너리가 지원하는 최신 날짜. 이보다 미래로 두면 빌드가 실패한다.
   "compatibility_date": "2026-08-11",
   "compatibility_flags": ["nodejs_compat"],
@@ -9,6 +13,11 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "none"
+  },
+  // CRM 재시도 크론. 10분마다 깨어나지만 실제 재시도 간격은 DB 조건
+  // (CRM_RETRY_SPACING_MS = 30분)이 지키므로, 크론 주기를 줄여도 재시도 예산은 줄지 않는다.
+  "triggers": {
+    "crons": ["*/10 * * * *"]
   },
   "r2_buckets": [
     {
