@@ -274,8 +274,10 @@ Cloudflare Pages/Workers 자산 업로드에는 자산당 25 MiB 제한이 있�
   확인한다.
 - R2 객체는 3년 후 자동 삭제된다(§7 라이프사이클 규칙). Supabase의
   텍스트 레코드는 남는다.
-- `crm_synced_at` / `crm_record_id`는 자체 CRM 연동 시 쓸 자리다.
-  지금은 항상 null이다.
+- `crm_synced_at`이 채워져 있으면 차선생 CRM 등록까지 끝난 건이다(§10.5).
+  null인데 `crm_error`가 차 있으면 재시도 중이거나 포기한 건이고, 포기한
+  건은 담당자에게 알림 메일이 이미 나갔다. `CRM_HOMEPAGE_SECRET`을 등록하지
+  않았다면 두 컬럼 모두 계속 null이다(연동이 꺼진 상태).
 - 기존 dl.dbmg.kr(Zmes) 전송은 이 구현에 포함되지 않았다.
   원본 WordPress가 살아 있는 동안에는 그쪽이 계속 받는다.
 
