@@ -89,8 +89,14 @@ async function handleFeedback(
           console.error('전역 리밋 알림 발송 실패', err);
         }
       })();
+      // ctx가 없으면 기다린다. 없다고 그냥 두면 응답과 함께 프라미스가 버려져
+      // 메일이 안 나갈 수 있는데, 하필 이 알림은 "폼이 조용히 죽는 것"을 막으려고
+      // 넣은 것이라 그렇게 되면 장치 자체가 무의미해진다. Astro 어댑터가 ctx를
+      // 못 넘겨준 전례도 있다(runtime.ts 참고). 이미 거절한 요청이라 조금 늦어져도
+      // 잃을 게 없다 — 오히려 공격자를 늦춘다.
       const ctx = waitUntilCtx(locals);
       if (ctx) ctx.waitUntil(alerting);
+      else await alerting;
     }
 
     return cf7Response('unknown', params.id ?? '', 'spam', FALLBACK_MESSAGES.spam);
