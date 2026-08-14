@@ -49,7 +49,9 @@ export type CrmOutcome =
       ok: true;
       /** 같은 submissionId 재전송이라 CRM이 200 + duplicate:true를 준 경우 */
       duplicate: boolean;
-      customerId: string | null;
+      /** CRM이 만든 고객 레코드의 키. 응답 본문의 `id`다(`customerId`가 아니다). */
+      recordId: string | null;
+      /** 사람이 읽는 고객 코드(예: CU-2608-0003). CRM 화면에서 이 값으로 찾는다. */
       customerCode: string | null;
     }
   | {
@@ -241,7 +243,15 @@ export async function pushLead(
     return {
       ok: true,
       duplicate: res.status === 200 || payload.duplicate === true,
-      customerId: typeof payload.customerId === 'string' ? payload.customerId : null,
+      // 실측한 성공 본문은 {"id":…,"customerCode":…,"duplicate":…} 형태다(2026-08-14).
+      // 계약서에는 본문 스펙이 없어 처음엔 customerId로 읽었고, 그래서 crm_record_id가
+      // 계속 비어 있었다. 옛 이름도 함께 받아 두어 상대가 어느 쪽을 보내든 집힌다.
+      recordId:
+        typeof payload.id === 'string'
+          ? payload.id
+          : typeof payload.customerId === 'string'
+            ? payload.customerId
+            : null,
       customerCode: typeof payload.customerCode === 'string' ? payload.customerCode : null,
     };
   }

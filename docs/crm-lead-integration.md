@@ -68,6 +68,17 @@ Body:   multipart/form-data
 
 ## 응답
 
+성공 본문은 계약서에 명시되지 않았고, 2026-08-14 실측으로 확인했다.
+
+```json
+{"id":"f36f3532-735f-4be6-82b6-25bb1d29a16e","customerCode":"CU-2608-0003","duplicate":true}
+```
+
+- `id` — CRM 고객 레코드의 키. **`customerId`가 아니다.** 처음엔 `customerId`로 읽어서
+  `crm_record_id`가 계속 비어 있었다. 지금은 `id`를 먼저 보고 `customerId`도 함께 받는다.
+- `customerCode` — 사람이 읽는 코드(`CU-2608-0003`). CRM 화면에서 찾을 때 쓴다.
+- `duplicate` — 같은 `submissionId` 재전송이면 `true`.
+
 | 코드 | 의미 | 처리 |
 |---|---|---|
 | 201 | 등록 완료 | 성공 |

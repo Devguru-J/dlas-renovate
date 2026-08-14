@@ -88,7 +88,7 @@ function harness(opts: {
   return { rec, deps: { supabase: SUPABASE, crm: CRM, mail: MAIL, bucket, fetchImpl } };
 }
 
-const ok201 = () => new Response(JSON.stringify({ customerId: 'cus_1' }), { status: 201 });
+const ok201 = () => new Response(JSON.stringify({ id: 'cus_1' }), { status: 201 });
 
 describe('runCrmRetry', () => {
   it('전송에 성공하면 동기 시각과 CRM 레코드 ID를 기록한다', async () => {
@@ -114,7 +114,7 @@ describe('runCrmRetry', () => {
   it('같은 리드를 다시 보내 200 duplicate를 받아도 성공으로 기록한다', async () => {
     const { rec, deps } = harness({
       rows: [lead()],
-      crm: () => new Response(JSON.stringify({ duplicate: true, customerId: 'cus_1' }), { status: 200 }),
+      crm: () => new Response(JSON.stringify({ duplicate: true, id: 'cus_1' }), { status: 200 }),
     });
 
     const summary = await runCrmRetry(deps);

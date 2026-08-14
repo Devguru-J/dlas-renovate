@@ -154,29 +154,31 @@ describe('pushLead 응답 분류', () => {
     expect((seen!.init.headers as Record<string, string>)['x-homepage-secret']).toBe('sh-secret-42');
   });
 
+  // 실측한 실제 응답 본문(2026-08-14): {"id":"…","customerCode":"CU-2608-0003","duplicate":true}
+  // 레코드 키의 이름은 customerId가 아니라 id다.
   it('201은 성공이고 중복이 아니다', async () => {
     const out = await pushLead(
       CFG,
       new FormData(),
-      respond(201, JSON.stringify({ customerId: 'c-1', customerCode: 'DL-0001' }), JSON_H),
+      respond(201, JSON.stringify({ id: 'c-1', customerCode: 'DL-0001' }), JSON_H),
     );
-    expect(out).toEqual({ ok: true, duplicate: false, customerId: 'c-1', customerCode: 'DL-0001' });
+    expect(out).toEqual({ ok: true, duplicate: false, recordId: 'c-1', customerCode: 'DL-0001' });
   });
 
   it('200은 성공이고 중복이다', async () => {
     const out = await pushLead(
       CFG,
       new FormData(),
-      respond(200, JSON.stringify({ duplicate: true, customerId: 'c-1', customerCode: 'DL-0001' }), JSON_H),
+      respond(200, JSON.stringify({ duplicate: true, id: 'c-1', customerCode: 'DL-0001' }), JSON_H),
     );
-    expect(out).toEqual({ ok: true, duplicate: true, customerId: 'c-1', customerCode: 'DL-0001' });
+    expect(out).toEqual({ ok: true, duplicate: true, recordId: 'c-1', customerCode: 'DL-0001' });
   });
 
   it('본문이 JSON이 아니어도 상태코드로 성공 판정한다', async () => {
     const out = await pushLead(CFG, new FormData(), respond(201, 'OK'));
     expect(out.ok).toBe(true);
     if (out.ok) {
-      expect(out.customerId).toBeNull();
+      expect(out.recordId).toBeNull();
       expect(out.customerCode).toBeNull();
     }
   });

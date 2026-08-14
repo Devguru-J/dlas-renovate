@@ -131,7 +131,7 @@ export async function syncLeadNow(
   try {
     const result = await pushLead(crm, buildCrmForm(row, attachments), fetchImpl);
     outcome = result.ok
-      ? { ok: true, customerId: result.customerId }
+      ? { ok: true, recordId: result.recordId }
       : { ok: false, reason: result.reason, retryable: result.retryable };
   } catch (err) {
     // pushLead는 던지지 않지만 buildCrmForm은 던질 수 있다(계약 밖 폼). 어느 쪽이든
@@ -164,7 +164,7 @@ async function record(
       row.id,
       {
         crm_synced_at: at,
-        crm_record_id: outcome.customerId,
+        crm_record_id: outcome.recordId,
         crm_error: null,
         crm_attempts: attempts,
         crm_last_attempt_at: at,
@@ -193,7 +193,7 @@ async function record(
 }
 
 type SendResult =
-  | { ok: true; customerId: string | null }
+  | { ok: true; recordId: string | null }
   | { ok: false; reason: string; retryable: boolean };
 
 async function sendOne(
@@ -205,7 +205,7 @@ async function sendOne(
       crmTypeFor(row.form_key) === 'quote' ? await loadAttachments(deps.bucket, row) : [];
     const outcome = await pushLead(deps.crm, buildCrmForm(row, attachments), deps.fetchImpl);
     return outcome.ok
-      ? { ok: true, customerId: outcome.customerId }
+      ? { ok: true, recordId: outcome.recordId }
       : { ok: false, reason: outcome.reason, retryable: outcome.retryable };
   } catch (err) {
     if (err instanceof MissingAttachment) {
