@@ -23,6 +23,31 @@
   "triggers": {
     "crons": ["*/10 * * * *"]
   },
+  // 컨택폼 엔드포인트의 속도 제한. Cloudflare가 엣지에서 카운터를 들고 있으므로
+  // Supabase에 닿기 전에 요청을 흘려버릴 수 있다 — 즉 이 검사 자체는 공격에 쓰일 수 없다.
+  //
+  // simple.limit은 period 동안 허용되는 요청 수다. period는 10 또는 60만 허용된다.
+  // - RL_PER_IP: 한 IP가 1분에 8건. 사람이 폼을 채워 보내는 속도로는 절대 닿지 않고,
+  //   "따라라락" 연타·스크립트 투하는 즉시 걸린다.
+  // - RL_GLOBAL: 모든 IP 합산 1분에 60건. 봇넷이 IP를 흩뿌려 IP 리밋을 우회해도
+  //   여기서 막힌다. 실제 문의량(하루 수 건)에 비하면 한참 여유 있는 값이라
+  //   정상 고객이 걸릴 일은 없다.
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "RL_PER_IP",
+        "type": "ratelimit",
+        "namespace_id": "1001",
+        "simple": { "limit": 8, "period": 60 }
+      },
+      {
+        "name": "RL_GLOBAL",
+        "type": "ratelimit",
+        "namespace_id": "1002",
+        "simple": { "limit": 60, "period": 60 }
+      }
+    ]
+  },
   "r2_buckets": [
     {
       // about 페이지 영상. 정적 자산은 Range 요청에 206을 주지 않아 워커가 직접 서빙한다.

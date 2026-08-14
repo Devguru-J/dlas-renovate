@@ -14,6 +14,8 @@ import {
   insertSubmission, updateEmailStatus, type SubmissionRow,
 } from '../../../../../../lib/forms/db';
 import { dedupeKey } from '../../../../../../lib/forms/dedupe';
+import { checkRateLimit, readRateLimitBindings } from '../../../../../../lib/forms/ratelimit';
+import { isIpOverDailyCap } from '../../../../../../lib/forms/ipcap';
 import { buildEmail, sendEmail, escapeHtml } from '../../../../../../lib/forms/notify';
 import { verifyTurnstile } from '../../../../../../lib/forms/turnstile';
 import { readEnv, crmConfig } from '../../../../../../lib/forms/env';
@@ -51,6 +53,21 @@ async function handleFeedback(
   onFormIdentified: (unitTag: string, cf7Id: string, msg: StatusMessages) => void,
 ): Promise<Response> {
   const env = readEnv(cfEnv as unknown as Record<string, unknown>);
+  const ip = request.headers.get('cf-connecting-ip');
+
+  // 0. 속도 제한. 본문을 파싱하기 전에 본다 — 여기서 흘려보내야 첨부 10MB짜리
+  // multipart 파싱이나 Supabase 왕복 같은 비싼 일을 공격자가 시킬 수 없다.
+  // 이 시점엔 아직 폼을 모르므로(_wpcf7이 본문에 있다) 폴백 문구를 쓴다.
+  // CF7 클라이언트는 응답의 status·message만 읽고 into로 폼을 찾지 않으므로,
+  // unitTag가 'unknown'이어도 화면에는 정상적으로 문구가 뜬다.
+  const limits = await checkRateLimit(
+    readRateLimitBindings(cfEnv as unknown as Record<string, unknown>),
+    ip,
+  );
+  if (!limits.ok) {
+    console.warn('rate limited', { scope: limits.scope });
+    return cf7Response('unknown', params.id ?? '', 'spam', FALLBACK_MESSAGES.spam);
+  }
 
   let form: FormData;
   try {
@@ -82,8 +99,6 @@ async function handleFeedback(
   const msg = def.statusMessages;
   // 폼이 식별된 뒤부터는 바깥 catch도 이 폼의 문구를 쓸 수 있게 알려준다.
   onFormIdentified(unitTag, def.cf7Id, msg);
-
-  const ip = request.headers.get('cf-connecting-ip');
 
   // 2. Turnstile — TURNSTILE_ENABLED가 false면(위젯이 페이지에 없음) 검사를 건너뛴다.
   // 켜져 있을 때는 기존과 동일하게 동작한다. readEnv()는 turnstileEnabled와
@@ -168,6 +183,22 @@ async function handleFeedback(
     );
   }
 
+  // 4.5. IP별 일일 누적 상한.
+  //
+  // 버스트 리밋(0단계)은 순간 속도만 본다. 그 한계선을 파악하고 3초에 한 건씩 꾸준히
+  // 던지는 저속 공격은 통과하므로, "지난 24시간 동안 이 IP가 만든 레코드 수"로 한 번 더 센다.
+  //
+  // 여기 두는 이유가 있다. 검증을 통과한 요청에만 돌리므로 빈 값 플러딩으로는 이 쿼리를
+  // 유발할 수 없고(=DoS 증폭 경로가 아님), R2 업로드·DB 쓰기보다 앞서므로 상한을 넘긴
+  // 요청은 저장소를 건드리지 못한다. 조회에 실패하면 통과시킨다(fail-open) —
+  // Supabase가 흔들린다고 정상 고객의 문의를 막을 수는 없다.
+  const ipHash = ip ? await hashIp(env.fileTokenSecret, ip) : null;
+  const supabase = { url: env.supabaseUrl, serviceRoleKey: env.supabaseServiceRoleKey };
+  if (await isIpOverDailyCap(supabase, ipHash, now)) {
+    console.warn('daily ip cap exceeded', { form: def.key });
+    return cf7Response(unitTag, def.cf7Id, 'spam', msg.spam);
+  }
+
   // 5. R2 먼저, DB 나중. 반대면 파일 없는 레코드가 생긴다.
   const bucket = (cfEnv as unknown as { FORM_UPLOADS: R2Bucket }).FORM_UPLOADS;
   try {
@@ -197,13 +228,12 @@ async function handleFeedback(
     attachments: pending.map((p) => p.meta),
     email_sent_at: null,
     email_error: null,
-    ip_hash: ip ? await hashIp(env.fileTokenSecret, ip) : null,
+    ip_hash: ipHash,
     user_agent: request.headers.get('user-agent'),
     dedupe_key: '',
   };
   row.dedupe_key = await dedupeKey(row, now);
 
-  const supabase = { url: env.supabaseUrl, serviceRoleKey: env.supabaseServiceRoleKey };
   let inserted: 'inserted' | 'duplicate';
   try {
     inserted = await insertSubmission(supabase, row);

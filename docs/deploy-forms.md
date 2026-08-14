@@ -100,10 +100,14 @@ npx wrangler secret put CRM_HOMEPAGE_SECRET
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-## 4. Turnstile은 런칭 시 사용하지 않는다
+## 4. Turnstile — 2026-08-14부터 켜져 있다
 
-클라이언트 결정으로, 런칭 시점에는 어떤 폼에도 Turnstile 위젯을 넣지
-않는다. **이것이 왜 위험한지 반드시 이해하고 넘어갈 것.**
+**현행: 운영은 `TURNSTILE_ENABLED=true`이고 세 폼에 invisible 위젯이 들어 있다.**
+아래는 그 전(위젯 없이 끄고 운영하던 시기)의 배경 설명이며, 왜 이 변수를 함부로
+비워두면 안 되는지를 함께 담고 있다. 자세한 현행 구성은 §10.8을 볼 것.
+
+초기에는 클라이언트 결정으로 어떤 폼에도 Turnstile 위젯을 넣지
+않았다. **이것이 왜 위험한지 반드시 이해하고 넘어갈 것.**
 
 `src/lib/forms/env.ts`의 `readTurnstileEnabled`는 `TURNSTILE_ENABLED`가
 설정되어 있지 않으면 **기본값을 `true`(활성화)로 둔다.** 이는 배포 시
@@ -113,14 +117,11 @@ fail-secure 설계다. 그런데 지금은 폼에 위젯 자체가 없으므로,
 Turnstile 응답 토큰을 검증하려 하고, 위젯이 없으니 토큰이 never
 전송되어 **모든 정상 제출이 스팸으로 거부된다.**
 
-따라서 배포 환경에는 반드시 다음을 등록한다.
+위젯이 없던 시기에는 그래서 `TURNSTILE_ENABLED=false`를 명시적으로 등록해 두었다.
+지금은 위젯이 있으므로 `true`이며, 로컬(`.dev.vars`)만 `false`로 남긴다 —
+로컬에서는 위젯 토큰을 받을 수 없기 때문이다.
 
-```bash
-npx wrangler secret put TURNSTILE_ENABLED
-# 값 입력: false
-```
-
-### 나중에 Turnstile을 켜는 방법
+### Turnstile을 켜는 방법 (2026-08-14에 이 절차로 켰다)
 
 1. Cloudflare 대시보드 → Turnstile에서 site key / secret key를 발급받는다.
 2. 각 폼(`analysis`, `consulting-new-car`, `consulting-used-car`,
@@ -353,6 +354,51 @@ CF7은 버튼을 잠그지 않고, 테마의 `jian.custom.js`에 있는 가드�
 
 같은 사람이 나중에 똑같은 내용으로 다시 문의하는 것은 정상이므로, 10분 버킷이 지나면
 같은 내용도 새 리드로 저장된다.
+
+## 10.8. 폼 플러딩(DoS) 방어는 세 겹이다
+
+공격자가 스크립트로 초당 수십 건씩 던지면 DB가 쓰레기로 차고 담당자 메일함이 마비된다.
+실측 베이스라인: 방어 전에는 **68.7 req/s로 60건을 던져 60건 전부 통과**했다.
+
+속도만 제한하면 뚫린다 — 공격자가 리밋을 파악하고 그 아래 속도(예: 3초에 한 건)로
+꾸준히 던지면 그만이다. 그래서 **속도·정체·총량**을 각각 다른 계층에서 막는다.
+
+| 계층 | 무엇을 막나 | 어디서 | 초과 시 |
+|---|---|---|---|
+| 버스트 리밋 | 순간 연사 | Cloudflare 엣지(`RL_PER_IP` 8건/분, `RL_GLOBAL` 60건/분) | `status:"spam"` |
+| Turnstile | 사람이 아닌 클라이언트 | 폼 페이지 invisible 위젯 + 서버 siteverify | `status:"spam"` |
+| 일일 IP 상한 | 저속 드립(리밋 아래로 꾸준히) | Supabase count, `ip_hash` 기준 24h 20건 | `status:"spam"` |
+
+설계상 중요한 점:
+
+- **버스트 리밋은 본문 파싱 전에 평가한다.** 그래야 공격자가 10MB multipart 파싱이나
+  Supabase 왕복 같은 비싼 일을 시킬 수 없다. 검사 자체가 증폭 경로가 되면 안 된다.
+- **일일 상한은 텍스트 검증을 통과한 요청에만 센다.** 빈 값 플러딩으로는 이 쿼리를
+  유발할 수 없고, R2·DB 쓰기보다 앞서 있어 상한 초과 요청은 저장소를 건드리지 못한다.
+- **조회 실패는 fail-open이다.** Supabase가 흔들린다고 정상 고객의 문의를 막지 않는다.
+  대신 버스트 리밋과 Turnstile이 그대로 남아 있다.
+- **거절은 4xx가 아니라 200 + `status:"spam"`이다.** CF7 6.0.6 클라이언트는 non-2xx를
+  받으면 화면에 아무 문구도 띄우지 않는다(fetch 실패로 처리). 200을 유지해야 방문자가
+  최소한 "오류가 발생했다"는 안내라도 본다.
+
+### Turnstile 위젯
+
+invisible 모드다 — 원본 사이트의 겉모습을 바꾸지 않기 위해서다(위젯 높이 0px).
+`analysis`, `consulting-new-car`, `consulting-used-car` 세 폼에 들어 있다.
+
+토큰은 1회용이라, 제출이 끝나면 `dl-turnstile-reset.js`가 위젯을 리셋해 새 토큰을 받는다.
+**이게 없으면 검증 실패 후 재제출이 전부 스팸으로 막힌다** — 차종 하나 빠뜨린 정상
+고객이 두 번째 제출부터 영영 못 보내게 되는 함정이다.
+
+로컬 개발(`.dev.vars`)에서는 위젯 토큰을 받을 수 없으므로 `TURNSTILE_ENABLED=false`를
+유지한다. 운영에서만 켠다.
+
+### 리밋 값을 조정하려면
+
+`wrangler.jsonc`의 `unsafe.bindings`에서 `simple.limit`을 고친다. `period`는 10 또는 60만
+허용된다. 일일 상한은 `src/lib/forms/ipcap.ts`의 `DAILY_IP_CAP`이다.
+값을 올리기 전에 실제 문의량을 먼저 확인할 것 — 현재 실제 문의는 하루 수 건 수준이라
+지금 값도 한참 여유가 있다.
 
 ## 11. 사전 런칭 체크리스트
 
