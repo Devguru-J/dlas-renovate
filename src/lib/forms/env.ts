@@ -12,6 +12,13 @@ export interface FormsEnv {
   notifyTo: string[];
   notifyFrom: string;
   fileTokenSecret: string;
+  /**
+   * ip_hash 전용 솔트. FILE_TOKEN_SECRET과 분리해 둔 이유:
+   * 그 값은 다운로드 링크 서명 키라서 유출 대응이나 링크 일괄 만료 목적으로 갈아끼울 수 있는데,
+   * 솔트를 겸하면 그때 모든 ip_hash가 함께 바뀌어 일일 상한이 전 사용자 대상으로 리셋되고
+   * 기존 레코드와 대조가 끊긴다. 별도 변수가 없으면 하위호환으로 FILE_TOKEN_SECRET을 쓴다.
+   */
+  ipHashSalt: string;
   siteOrigin: string;
   // CRM 연동은 선택이다. 상대측 시크릿이 오기 전에도 사이트는 그대로 동작해야 하므로
   // CRM_HOMEPAGE_SECRET이 없으면 "실패"가 아니라 "전송 생략"이다.
@@ -98,6 +105,7 @@ export function readEnv(source: Record<string, unknown>): FormsEnv {
       .filter((s) => s !== ''),
     notifyFrom: required(source, 'NOTIFY_FROM'),
     fileTokenSecret: required(source, 'FILE_TOKEN_SECRET'),
+    ipHashSalt: optional(source, 'IP_HASH_SALT') ?? required(source, 'FILE_TOKEN_SECRET'),
     siteOrigin: required(source, 'PUBLIC_SITE_ORIGIN').replace(/\/+$/, ''),
     crmSecret: optional(source, 'CRM_HOMEPAGE_SECRET'),
     crmEndpoint: optional(source, 'CRM_ENDPOINT') ?? DEFAULT_CRM_ENDPOINT,

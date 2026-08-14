@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   checkRateLimit,
   readRateLimitBindings,
+  shouldAlert,
   type RateLimiter,
 } from '../../src/lib/forms/ratelimit';
 
@@ -43,6 +44,15 @@ describe('checkRateLimit', () => {
     expect(seen).toEqual(['203.0.113.9']);
   });
 
+  it('IPv6는 /64로 묶은 키를 쓴다 — 주소 로테이션으로 우회할 수 없어야 한다', async () => {
+    const seen: string[] = [];
+    const b = { perIp: limiter(true, seen), global: null };
+    await checkRateLimit(b, '2001:db8:1:2:aaaa::1');
+    await checkRateLimit(b, '2001:db8:1:2:bbbb::2');
+    await checkRateLimit(b, '2001:db8:1:2::3');
+    expect(new Set(seen).size).toBe(1);
+  });
+
   it('IP가 없으면 IP 리밋은 건너뛰고 전역만 본다', async () => {
     const ipSeen: string[] = [];
     const r = await checkRateLimit({ perIp: limiter(false, ipSeen), global: limiter(true) }, null);
@@ -57,6 +67,20 @@ describe('checkRateLimit', () => {
   });
 });
 
+describe('shouldAlert', () => {
+  it('통과하면 true — 1분에 한 번만 열리는 문이다', async () => {
+    expect(await shouldAlert({ alert: limiter(true) })).toBe(true);
+  });
+
+  it('이미 최근에 보냈으면 false — 공격 중 메일 폭탄을 막는다', async () => {
+    expect(await shouldAlert({ alert: limiter(false) })).toBe(false);
+  });
+
+  it('바인딩이 없으면 보내지 않는다 — 도배 방지 없는 알림은 그 자체가 사고다', async () => {
+    expect(await shouldAlert({})).toBe(false);
+  });
+});
+
 describe('readRateLimitBindings', () => {
   it('limit 함수를 가진 값만 리미터로 인정한다', () => {
     const real = limiter(true);
@@ -65,9 +89,15 @@ describe('readRateLimitBindings', () => {
     expect(b.global).toBeNull();
   });
 
-  it('바인딩이 아예 없으면 둘 다 null', () => {
+  it('바인딩이 아예 없으면 전부 null', () => {
     const b = readRateLimitBindings({});
     expect(b.perIp).toBeNull();
     expect(b.global).toBeNull();
+    expect(b.alert).toBeNull();
+  });
+
+  it('RL_ALERT도 읽는다', () => {
+    const a = limiter(true);
+    expect(readRateLimitBindings({ RL_ALERT: a }).alert).toBe(a);
   });
 });

@@ -14,8 +14,11 @@ import {
   insertSubmission, updateEmailStatus, type SubmissionRow,
 } from '../../../../../../lib/forms/db';
 import { dedupeKey } from '../../../../../../lib/forms/dedupe';
-import { checkRateLimit, readRateLimitBindings } from '../../../../../../lib/forms/ratelimit';
+import {
+  checkRateLimit, readRateLimitBindings, shouldAlert,
+} from '../../../../../../lib/forms/ratelimit';
 import { isIpOverDailyCap } from '../../../../../../lib/forms/ipcap';
+import { ipBucket } from '../../../../../../lib/forms/ip';
 import { buildEmail, sendEmail, escapeHtml } from '../../../../../../lib/forms/notify';
 import { verifyTurnstile } from '../../../../../../lib/forms/turnstile';
 import { readEnv, crmConfig } from '../../../../../../lib/forms/env';
@@ -60,12 +63,36 @@ async function handleFeedback(
   // 이 시점엔 아직 폼을 모르므로(_wpcf7이 본문에 있다) 폴백 문구를 쓴다.
   // CF7 클라이언트는 응답의 status·message만 읽고 into로 폼을 찾지 않으므로,
   // unitTag가 'unknown'이어도 화면에는 정상적으로 문구가 뜬다.
-  const limits = await checkRateLimit(
-    readRateLimitBindings(cfEnv as unknown as Record<string, unknown>),
-    ip,
-  );
+  const rlBindings = readRateLimitBindings(cfEnv as unknown as Record<string, unknown>);
+  const limits = await checkRateLimit(rlBindings, ip);
   if (!limits.ok) {
     console.warn('rate limited', { scope: limits.scope });
+
+    // 전역 리밋이 걸렸다는 건 폼이 모든 방문자에게 죽었다는 뜻이다. 리드로 먹고사는
+    // 사이트에서 이게 조용히 일어나면 매출이 새는 걸 아무도 모른다. 사람에게 알린다.
+    // RL_ALERT가 1분에 한 번만 통과시키므로 공격 중에도 메일 폭탄이 되지 않고,
+    // 알림 실패가 응답을 바꾸지 않도록 통째로 감싼다.
+    if (limits.scope === 'global') {
+      const alerting = (async () => {
+        try {
+          if (!(await shouldAlert(rlBindings))) return;
+          await sendEmail(
+            { apiKey: env.resendApiKey, from: env.notifyFrom, to: env.notifyTo },
+            '[긴급] dlas 컨택폼 전역 속도 제한 발동 — 폼이 막히고 있습니다',
+            `<p style="font-family:-apple-system,BlinkMacSystemFont,'Malgun Gothic',sans-serif">
+전역 속도 제한(1분 600건)에 걸려 <strong>모든 방문자</strong>의 문의가 거부되고 있습니다.
+공격이거나 비정상 트래픽입니다. Cloudflare 대시보드에서 트래픽을 확인해 주세요.</p>
+<p style="font-family:-apple-system,BlinkMacSystemFont,'Malgun Gothic',sans-serif">
+이 알림은 1분에 한 번만 발송됩니다.</p>`,
+          );
+        } catch (err) {
+          console.error('전역 리밋 알림 발송 실패', err);
+        }
+      })();
+      const ctx = waitUntilCtx(locals);
+      if (ctx) ctx.waitUntil(alerting);
+    }
+
     return cf7Response('unknown', params.id ?? '', 'spam', FALLBACK_MESSAGES.spam);
   }
 
@@ -192,7 +219,9 @@ async function handleFeedback(
   // 유발할 수 없고(=DoS 증폭 경로가 아님), R2 업로드·DB 쓰기보다 앞서므로 상한을 넘긴
   // 요청은 저장소를 건드리지 못한다. 조회에 실패하면 통과시킨다(fail-open) —
   // Supabase가 흔들린다고 정상 고객의 문의를 막을 수는 없다.
-  const ipHash = ip ? await hashIp(env.fileTokenSecret, ip) : null;
+  // ipBucket으로 정규화한 값을 해시한다. 전체 IPv6 주소를 쓰면 공격자가 자기 /64 안에서
+  // 주소만 바꿔가며 매번 새 ip_hash를 얻어 일일 상한을 무한히 리셋할 수 있다.
+  const ipHash = ip ? await hashIp(env.ipHashSalt, ipBucket(ip)) : null;
   const supabase = { url: env.supabaseUrl, serviceRoleKey: env.supabaseServiceRoleKey };
   if (await isIpOverDailyCap(supabase, ipHash, now)) {
     console.warn('daily ip cap exceeded', { form: def.key });

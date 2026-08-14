@@ -14,6 +14,8 @@
  * 없다고 폼이 죽으면 안 된다.
  */
 
+import { ipBucket } from './ip';
+
 /** Cloudflare Rate Limiting 바인딩의 최소 형태. limit()만 쓴다. */
 export interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -24,6 +26,22 @@ export interface RateLimitBindings {
   perIp?: RateLimiter | null;
   /** 전역 리밋(모든 IP 합산) */
   global?: RateLimiter | null;
+  /**
+   * 알림 도배 방지용. 리밋이 아니라 "1분에 한 번만 통과하는 문"으로 쓴다.
+   * 전역 리밋이 걸리면 폼이 모두에게 죽은 것이므로 담당자에게 알려야 하는데,
+   * 공격 중에는 그 조건이 초당 수십 번 성립하기 때문이다.
+   */
+  alert?: RateLimiter | null;
+}
+
+/**
+ * 지금 알림을 보내도 되는가. 바인딩이 없으면 보내지 않는다 —
+ * 도배 방지 장치가 없는 상태에서 알림을 켜면 공격이 곧 메일 폭탄이 된다.
+ */
+export async function shouldAlert(bindings: RateLimitBindings): Promise<boolean> {
+  if (!bindings.alert) return false;
+  const r = await bindings.alert.limit({ key: 'global-trip' });
+  return r.success;
 }
 
 export type RateLimitOutcome =
@@ -37,13 +55,16 @@ export type RateLimitOutcome =
  *
  * key가 없으면(IP 헤더가 없는 비정상 요청) IP 리밋은 건너뛰고 전역만 적용한다 —
  * 빈 key로 전 요청을 한 버킷에 몰아넣어 정상 사용자를 함께 막는 일을 피한다.
+ *
+ * 키는 ipBucket()으로 정규화한다. IPv6 전체 주소를 그대로 쓰면 공격자가 자기 /64 안에서
+ * 주소만 바꿔가며 매번 새 버킷을 얻어 이 계층을 통째로 우회할 수 있다.
  */
 export async function checkRateLimit(
   bindings: RateLimitBindings,
   ip: string | null,
 ): Promise<RateLimitOutcome> {
   if (bindings.perIp && ip) {
-    const r = await bindings.perIp.limit({ key: ip });
+    const r = await bindings.perIp.limit({ key: ipBucket(ip) });
     if (!r.success) return { ok: false, scope: 'ip' };
   }
   if (bindings.global) {
@@ -62,5 +83,6 @@ export function readRateLimitBindings(source: Record<string, unknown>): RateLimi
   return {
     perIp: asLimiter(source['RL_PER_IP']),
     global: asLimiter(source['RL_GLOBAL']),
+    alert: asLimiter(source['RL_ALERT']),
   };
 }
