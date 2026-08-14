@@ -66,6 +66,9 @@ npx wrangler secret put NOTIFY_TO
 npx wrangler secret put NOTIFY_FROM
 npx wrangler secret put FILE_TOKEN_SECRET
 npx wrangler secret put PUBLIC_SITE_ORIGIN
+
+# 차선생 CRM 연동. 이것만 선택이다 — 없으면 연동이 꺼진 채로 사이트가 정상 동작한다.
+npx wrangler secret put CRM_HOMEPAGE_SECRET
 ```
 
 | 변수 | 용도 |
@@ -79,6 +82,8 @@ npx wrangler secret put PUBLIC_SITE_ORIGIN
 | `NOTIFY_FROM` | 발신 주소. Resend에서 **도메인 인증을 마친 주소**여야 한다. 인증 전에는 Resend가 발송을 거부한다 |
 | `FILE_TOKEN_SECRET` | 첨부파일 서명 다운로드 링크 서명용 시크릿 (아래 생성법 참고) |
 | `PUBLIC_SITE_ORIGIN` | 사이트의 정식 오리진(예: `https://dlas.co.kr`). 서명 링크 등에 쓰인다 |
+| `CRM_HOMEPAGE_SECRET` | **선택.** 차선생 CRM 연동 시크릿. **이 값의 유무가 연동의 켜짐/꺼짐 스위치다** — 없으면 전송을 시도조차 하지 않아 재시도 예산도 소모되지 않는다. 계약은 `docs/crm-lead-integration.md` |
+| `CRM_ENDPOINT` | **선택.** 스테이징 CRM으로 돌릴 때만 쓴다. 없으면 계약서의 운영 URL을 쓴다 |
 
 `FILE_TOKEN_SECRET`은 다음으로 생성한다.
 
@@ -274,6 +279,27 @@ Cloudflare Pages/Workers 자산 업로드에는 자산당 25 MiB 제한이 있�
 - 기존 dl.dbmg.kr(Zmes) 전송은 이 구현에 포함되지 않았다.
   원본 WordPress가 살아 있는 동안에는 그쪽이 계속 받는다.
 
+## 10.5. CRM 재시도 크론
+
+`wrangler.jsonc`의 `triggers.crons`(10분 주기)가 `src/worker.ts`의 `scheduled`를
+깨워, 아직 CRM에 못 보낸 리드를 다시 보낸다. 배포 후 확인할 것:
+
+1. Cloudflare 대시보드 → Workers → `dlas` → Settings → Trigger Events에
+   Cron `*/10 * * * *`이 등록됐는지 본다. 없으면 `dist/server/wrangler.json`에
+   `triggers`가 실렸는지부터 확인한다(어댑터가 생성하는 파일이다).
+2. 로컬에서 크론을 직접 때려볼 수 있다.
+
+```bash
+npx wrangler dev --test-scheduled
+curl http://localhost:8787/cdn-cgi/handler/scheduled
+```
+
+   집어 온 건이 있을 때만 `crm retry {"picked":…}` 한 줄을 로그로 남긴다.
+   (10분마다 조용한 로그를 쌓지 않기 위해서다.)
+3. `CRM_HOMEPAGE_SECRET`이 없으면 크론은 조회조차 하지 않고 즉시 끝난다.
+   연동을 잠시 끄고 싶으면 이 시크릿을 지우면 된다 — 그동안 들어온 리드는
+   시도 횟수가 늘지 않은 채 남아 있다가, 시크릿을 다시 넣으면 크론이 한 번에 따라잡는다.
+
 ## 11. 사전 런칭 체크리스트
 
 - [ ] 마이그레이션 적용 여부를 확인했다 (§1)
@@ -288,6 +314,8 @@ Cloudflare Pages/Workers 자산 업로드에는 자산당 25 MiB 제한이 있�
 - [ ] `wrangler.jsonc`의 `compatibility_date`를 임의로 올리지 않았다
 - [ ] 로컬 `wrangler dev` 통합 테스트 4종(성공/검증 실패/첨부/위장 파일)을
       모두 통과했다
+- [ ] CRM 연동을 켤 것이면 `CRM_HOMEPAGE_SECRET`을 등록하고, Cron 트리거가
+      대시보드에 등록됐는지 확인했다 (§10.5)
 - [ ] WAF rate limiting 규칙(`contact-form-submit`)을 등록했다
 - [ ] 정적 자산 중 25 MiB를 넘는 파일이 없다
 - [ ] `npm test`, `npm run build`가 배포 직전 기준으로 통과한다
