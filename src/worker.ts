@@ -1,4 +1,5 @@
 import astro from '@astrojs/cloudflare/entrypoints/server';
+import { canonicalHostRedirect } from './lib/canonical-host';
 import { runCrmRetry, type CrmRetryBucket } from './lib/forms/crm-retry';
 import { crmConfig, readEnv } from './lib/forms/env';
 
@@ -14,7 +15,11 @@ import { crmConfig, readEnv } from './lib/forms/env';
  * 판단 로직은 전부 lib/forms/crm-retry.ts에 있고 여기서는 환경만 엮는다.
  */
 export default {
-  fetch: astro.fetch,
+  // www로 들어온 요청만 apex로 넘기고, 나머지는 어댑터 fetch에 그대로 넘긴다.
+  // 사이트 처리 경로는 여전히 아무것도 바뀌지 않는다.
+  fetch(request: Request, env: unknown, ctx: ExecutionContext): Response | Promise<Response> {
+    return canonicalHostRedirect(request) ?? astro.fetch(request, env as never, ctx);
+  },
 
   scheduled(_controller: ScheduledController, env: unknown, ctx: ExecutionContext): void {
     ctx.waitUntil(retryCrm(env));
