@@ -2,6 +2,13 @@
 # @astrojs/sitemap은 파일명을 `${filenameBase}-index.xml`로 고정해 언더스코어 형태를 만들 수 없다.
 /sitemap_index.xml  /sitemap-index.xml  301
 
+# 원본 sitemap_index.xml이 거느리던 자식 3개. 우리 인덱스의 자식은 sitemap-0.xml 하나뿐이라
+# 이 주소들은 전환과 함께 404가 되고, Search Console·네이버에 등록돼 있으면 수집 오류로 남는다.
+# 실제 URL 목록을 담은 sitemap-0.xml로 넘겨 오류 없이 이어붙인다.
+/post-sitemap.xml      /sitemap-0.xml  301
+/page-sitemap.xml      /sitemap-0.xml  301
+/category-sitemap.xml  /sitemap-0.xml  301
+
 # 중고차 맞춤 컨설팅은 신차 페이지와 본문이 95% 동일하고 사이트 메뉴 어디에서도
 # 링크되지 않는 사실상 중복 페이지였다. 중복 콘텐츠 불이익을 피하려 신차로 통합한다.
 # 되돌리려면 이 줄과 astro.config.mjs의 사이트맵 filter 예외를 함께 제거하면 된다.
