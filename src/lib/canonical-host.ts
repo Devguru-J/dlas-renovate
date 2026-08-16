@@ -19,19 +19,27 @@ const CANONICAL_ORIGIN = 'https://dlas.co.kr';
  * null이면 호출자는 평소대로 요청을 처리하면 된다.
  */
 export function canonicalHostRedirect(request: Request): Response | null {
+  const method = request.method.toUpperCase();
+
+  // 문서 요청(GET/HEAD)만 넘긴다.
+  //
+  // POST를 넘기려던 적이 있었는데(308) 폼이 통째로 죽었다. www에서 폼을 열면
+  // action이 상대경로라 제출도 www로 가는데, 308은 **교차 출처** 리다이렉트가 된다.
+  // 브라우저는 따라가지만 apex가 Access-Control-Allow-Origin을 주지 않으므로
+  // fetch가 실패하고, CF7은 성공도 실패도 아닌 상태로 스피너만 돌린다.
+  // (301을 쓰면 본문 없는 GET이 되어 문의가 조용히 사라진다 — 그것도 답이 아니다.)
+  //
+  // 같은 호스트에서 그냥 처리하는 게 옳다. Origin과 Host가 일치하니 Astro CSRF도 통과하고,
+  // 어차피 페이지 로드 시점의 301로 대부분의 방문자는 apex에서 폼을 연다.
+  if (method !== 'GET' && method !== 'HEAD') return null;
+
   const url = new URL(request.url);
   if (!REDIRECT_FROM.has(url.hostname.toLowerCase())) return null;
 
   const target = new URL(url.pathname + url.search, CANONICAL_ORIGIN);
 
-  // GET/HEAD는 301이 정답이다(원본 동작이고 검색엔진이 링크 가치를 넘긴다).
-  // 그 외 메서드에 301을 쓰면 브라우저가 본문 없는 GET으로 바꿔 버려 폼 제출이
-  // 흔적도 없이 사라진다. 308은 메서드와 본문을 그대로 유지한다.
-  const method = request.method.toUpperCase();
-  const status = method === 'GET' || method === 'HEAD' ? 301 : 308;
-
   return new Response(null, {
-    status,
+    status: 301,
     headers: { location: target.toString() },
   });
 }
